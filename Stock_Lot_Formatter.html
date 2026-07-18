@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stock Lot Formatter — จัดรูปแบบสต็อกตาม LOT</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Kanit:wght@400;500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="styles/variables.css">
+<link rel="stylesheet" href="styles/base.css">
+<link rel="stylesheet" href="styles/layout.css">
+<link rel="stylesheet" href="src/components/stepper/stepper.css">
+<link rel="stylesheet" href="src/components/modal/modal.css">
+<link rel="stylesheet" href="src/components/toast/toast.css">
+<link rel="stylesheet" href="src/components/loading/loading.css">
+<link rel="stylesheet" href="src/components/table/table.css">
+<link rel="stylesheet" href="src/components/form/form.css">
+<link rel="stylesheet" href="styles/responsive.css">
+</head>
+<body>
+<div id="app">
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-mark"></div>
+      <div>
+        <h1>Stock Lot Formatter</h1>
+        <p>จัดรูปแบบไฟล์สต็อกตามรายการสินค้าและ LOT — ห้องจ่ายยา</p>
+      </div>
+    </div>
+    <button class="btn btn-danger" id="btnReset">เริ่มใหม่</button>
+  </div>
+
+  <div class="app-workspace">
+    <aside class="wizard-sidebar" aria-label="ขั้นตอนการทำงาน">
+      <div class="stepper" id="stepper"></div>
+    </aside>
+    <main class="wizard-main">
+      <div id="stepContent"></div>
+      <div class="footer-nav">
+        <button class="btn" id="btnBack">← ย้อนกลับ</button>
+        <div class="right">
+          <button class="btn btn-primary" id="btnNext">ถัดไป →</button>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<div id="modalRoot"></div>
+<div id="toasts"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+
+<!-- config -->
+<script src="src/config/fields.config.js"></script>
+<script src="src/config/app.config.js"></script>
+
+<!-- state -->
+<script src="src/state/store.js"></script>
+
+<!-- utils -->
+<script src="src/utils/string.util.js"></script>
+<script src="src/utils/number.util.js"></script>
+<script src="src/utils/date.util.js"></script>
+<script src="src/utils/mapping.util.js"></script>
+
+<!-- services -->
+<script src="src/services/excel-import.service.js"></script>
+<script src="src/services/excel-export.service.js"></script>
+
+<!-- components -->
+<script src="src/components/toast/toast.js"></script>
+<script src="src/components/modal/modal.js"></script>
+<script src="src/components/loading/loading.js"></script>
+<script src="src/components/stepper/stepper.js"></script>
+
+<!-- core business logic -->
+<script src="src/core/validation.logic.js"></script>
+<script src="src/core/grouping.js"></script>
+
+<!-- wizard step pages -->
+<script src="src/modules/upload/upload.page.js"></script>
+<script src="src/modules/sheet-select/sheet-select.page.js"></script>
+<script src="src/modules/mapping/mapping.page.js"></script>
+<script src="src/modules/settings/settings.page.js"></script>
+<script src="src/modules/validation/validation.page.js"></script>
+<script src="src/modules/preview/preview.page.js"></script>
+<script src="src/modules/export/export.page.js"></script>
+
+<!-- wizard router + boot -->
+<script src="src/wizard-router.js"></script>
+<script src="src/app.js"></script>
+</body>
+</html>

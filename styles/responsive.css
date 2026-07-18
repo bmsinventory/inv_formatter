@@ -1,0 +1,45 @@
+@media(max-width:720px){
+  .grid-2{grid-template-columns:1fr;}
+}
+@media(max-width:800px){
+  .stat-grid{grid-template-columns:repeat(2,1fr);}
+  .app-workspace{grid-template-columns:1fr;gap:14px;}
+  .wizard-sidebar{position:static;}
+  .wizard-main{min-height:calc(100vh - 210px);}
+  .stepper{flex-direction:row;align-items:flex-start;overflow-x:auto;padding:14px 10px;}
+  .step{flex:0 0 100px;min-height:auto;flex-direction:column;gap:7px;padding:5px 4px;background:transparent!important;}
+  .step:not(:last-child)::after{top:24px;bottom:auto;left:calc(50% + 24px);width:auto;right:calc(-50% + 24px);height:3px;}
+  .step-label{text-align:center;font-size:11px;}
+  .preview-total-card{align-items:flex-start;}
+  .preview-toolbar{align-items:stretch;flex-direction:column;}
+  .preview-toolbar .filters{justify-content:flex-start;}
+  .preview-toolbar .filters input[type=text]{min-width:100%;max-width:none;}
+  .preview-toolbar .btn-export-image{margin-left:0;width:100%;justify-content:center;}
+  .multi-filter{width:100%;}
+  .multi-filter-list{width:min(500px,calc(100vw - 64px));}
+}
+
+@media(max-width:640px){
+  #app{padding:18px 14px 64px;}
+  .topbar{margin-bottom:18px;}
+  .brand-mark{width:44px;height:44px;border-radius:13px;}
+  .brand h1{font-size:18px;}
+  .brand p{font-size:11.5px;max-width:230px;}
+  .topbar .btn-danger{padding:8px 12px;min-height:38px;margin-left:auto;}
+  .stepper{padding:12px 8px;justify-content:flex-start;}
+  .step{flex:0 0 88px;}
+  .wizard-main{border-radius:14px;}
+  #stepContent>.panel{padding:22px 18px 14px;}
+  .panel{padding:22px 18px;border-radius:14px;}
+  .panel h2{font-size:18px;}
+  .dropzone{padding:38px 14px;}
+  .footer-nav{bottom:0;padding:12px 18px;background:rgba(255,255,255,.94);backdrop-filter:blur(10px);}
+  .footer-nav .btn{padding:9px 13px;}
+  .stat-grid{grid-template-columns:1fr 1fr;gap:8px;}
+  .preview-total-card{padding:16px;gap:12px;}
+  .preview-total-value{font-size:24px;}
+  .preview-total-hint{display:none;}
+  .preview-stat-grid{display:grid;grid-template-columns:repeat(2,1fr);overflow:visible;}
+  .multi-filter-options{grid-template-columns:1fr;}
+  #toasts{left:14px;right:14px;bottom:14px;}
+}

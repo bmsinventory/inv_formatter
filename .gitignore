@@ -1,0 +1,7 @@
+.agents/
+.claude/
+.codex/
+.edge-*/
+*.log
+desktop-check.png
+mobile-check.png

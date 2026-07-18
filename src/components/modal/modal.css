@@ -1,0 +1,6 @@
+/* ---------- Modal ---------- */
+.overlay{position:fixed;inset:0;background:rgba(28,43,40,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;}
+.modal{background:var(--paper);border-radius:12px;padding:26px;max-width:420px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.25);}
+.modal h3{margin:0 0 10px;font-size:16px;}
+.modal p{font-size:13.5px;color:var(--ink-soft);margin:0 0 20px;line-height:1.55;}
+.modal .row{display:flex;gap:10px;justify-content:flex-end;}
