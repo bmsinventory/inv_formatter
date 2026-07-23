@@ -15,10 +15,22 @@ window.SLF = window.SLF || {};
       const offsetMs = v.getTimezoneOffset() * 60000;
       const snappedLocalMs = Math.round((v.getTime() - offsetMs) / DAY_MS) * DAY_MS;
       const snapped = new Date(snappedLocalMs);
-      return new Date(Date.UTC(snapped.getUTCFullYear(), snapped.getUTCMonth(), snapped.getUTCDate()));
+      let y = snapped.getUTCFullYear();
+      if(y>2400) y -= 543; // source cell was a real Date typed with a Buddhist year (Excel doesn't know BE, so it lands here literally) -> CE
+      return new Date(Date.UTC(y, snapped.getUTCMonth(), snapped.getUTCDate()));
     }
     if(!v) return null;
     const s = String(v).trim();
+    // short "mm/yy" or "mm/yyyy" with no day — treat as month-only expiry and
+    // resolve to the last day of that month (e.g. "12/30" -> 31/12/2030)
+    let mShort = s.match(/^(\d{1,2})[\/\-.](\d{2,4})$/);
+    if(mShort){
+      let [_,mo,y] = mShort; mo=+mo; y=+y;
+      if(y<100) y += 2000;
+      if(y>2400) y -= 543; // Buddhist Era -> CE
+      const dt = new Date(Date.UTC(y, mo, 0)); // day 0 of next month = last day of `mo`
+      if(!isNaN(dt)) return dt;
+    }
     // try dd/mm/yyyy (Thai) — could be Buddhist year
     let m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
     if(m){
