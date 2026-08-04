@@ -4,14 +4,19 @@
 @media(max-width:800px){
   .app-shell{flex-direction:column;}
   .app-main{width:100%;}
-  .app-nav{width:100%;position:static;flex-direction:row;align-items:center;gap:10px;padding:10px;border-radius:16px;}
+  .app-nav{width:100%;min-height:0;position:static;flex-direction:row;align-items:center;gap:10px;padding:9px;border-radius:18px;overflow:visible;}
   .app-nav-brand{flex:none;}
   .app-nav-title{display:none;}
   .app-nav-brand .brand-mark{width:36px;height:36px;border-radius:11px;}
-  .app-nav-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));flex:1;gap:6px;}
-  .app-nav-item{width:100%;min-height:44px;padding:9px 10px;}
+  .app-nav-list{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));flex:1;gap:6px;}
+  .app-nav-list::before{display:none;}
+  .app-nav-item{display:flex;justify-content:center;width:100%;min-height:48px;padding:7px 8px;}
+  .app-nav-item::after{left:20%;right:20%;top:auto;bottom:-1px;width:auto;height:3px;transform:scaleX(.4);}
+  .app-nav-item.active::after{transform:scaleX(1);}
+  .app-nav-icon{width:32px;height:32px;border-radius:10px;}
   .app-nav-label{white-space:normal;line-height:1.25;}
-  .app-nav-badge{display:none;}
+  .app-account{flex:none;margin:0 0 0 auto;padding:0 0 0 8px;border-top:0;border-left:1px solid var(--border)}
+  .app-account-user,.app-account-meta{display:none}.app-account-actions{display:flex}.app-account-actions button{white-space:nowrap;padding-inline:9px}
   .stat-grid{grid-template-columns:repeat(2,1fr);}
   .app-workspace{grid-template-columns:1fr;gap:14px;}
   .wizard-sidebar{position:static;}
@@ -32,6 +37,13 @@
 @media(max-width:640px){
   #app{padding:10px 10px calc(24px + env(safe-area-inset-bottom));}
   .app-shell{gap:12px;}
+  .app-nav{display:block;padding:8px;overflow:hidden;}
+  .app-nav-brand{display:none;}
+  .app-nav-list{display:flex;overflow-x:auto;gap:7px;scrollbar-width:none;scroll-snap-type:x mandatory;}
+  .app-nav-list::-webkit-scrollbar{display:none;}
+  .app-nav-item{flex:0 0 auto;min-width:126px;scroll-snap-align:start;}
+  .app-account{display:block;margin:8px 0 0;padding:8px 0 0;border-left:0;border-top:1px solid var(--border)}
+  .app-account-user{display:grid}.app-account-meta{display:flex}.app-account-actions{display:grid}
   .topbar{align-items:flex-start;margin-bottom:12px;gap:10px;padding-inline:2px;}
   .topbar .brand{min-width:0;flex:1;}
   .topbar-actions{width:auto;flex:none;}
@@ -74,8 +86,8 @@
 @media(max-width:420px){
   .app-nav{padding:7px;}
   .app-nav-brand{display:none;}
-  .app-nav-item{justify-content:center;padding:8px 6px;font-size:12px;text-align:center;}
-  .app-nav-icon{display:none;}
+  .app-nav-item{min-width:118px;justify-content:flex-start;padding:7px 8px;font-size:11.5px;text-align:left;}
+  .app-nav-icon{display:grid;width:30px;height:30px;font-size:15px;}
   .topbar{flex-wrap:nowrap;}
   .theme-picker select{min-width:74px;padding-right:22px;font-size:12px;}
   .step{flex-basis:80px;}

@@ -21,18 +21,18 @@ where exists(select 1 from public.organization_members o join public.departments
 
 create table if not exists public.items (
   id uuid primary key default gen_random_uuid(), organization_id uuid not null references public.organizations(id) on delete cascade,
-  code text not null, name text not null, base_unit text not null default 'หน่วย', barcode text, category text,
+  item_id text not null, code text not null, name text not null, base_unit text not null default 'หน่วย', unit_price numeric not null default 0 check(unit_price>=0), barcode text, category text,
   is_active boolean not null default true, created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
-  unique(organization_id,code)
+  unique(organization_id,item_id)
 );
 create table if not exists public.item_packages (
   id uuid primary key default gen_random_uuid(), item_id uuid not null references public.items(id) on delete cascade,
-  name text not null, size numeric not null check(size>0), barcode text, created_at timestamptz not null default now(),
+  stock_item_unit_id text, name text not null, size numeric not null check(size>0), barcode text, created_at timestamptz not null default now(),
   unique(item_id,name,size)
 );
 create table if not exists public.department_items (
   id uuid primary key default gen_random_uuid(), department_id uuid not null references public.departments(id) on delete cascade,
-  item_id uuid not null references public.items(id) on delete cascade, location text,
+  item_id uuid not null references public.items(id) on delete cascade, location text, is_explicit boolean not null default true,
   status text not null default 'pending' check(status in ('pending','counting','completed','review','missing','locked')),
   assigned_to uuid references auth.users(id), locked_by uuid references auth.users(id), lock_expires_at timestamptz,
   created_at timestamptz not null default now(), updated_at timestamptz not null default now(), unique(department_id,item_id)
@@ -61,6 +61,49 @@ $$;
 create or replace function public.has_department_access(target_department uuid) returns boolean language sql stable security definer set search_path=public as $$
   select exists(select 1 from public.department_members where department_id=target_department and user_id=auth.uid() and status='active');
 $$;
+create or replace function public.ensure_department_item(target_department_id uuid,target_source_item_id text)
+returns uuid language plpgsql security definer set search_path=public as $$
+declare target_item_id uuid; department_org_id uuid; link_id uuid;
+begin
+  if not public.has_department_access(target_department_id) then raise exception 'Department access denied'; end if;
+  select organization_id into department_org_id from public.departments where id=target_department_id and is_active=true;
+  select id into target_item_id from public.items where organization_id=department_org_id and item_id=target_source_item_id and is_active=true;
+  if target_item_id is null then raise exception 'Item not found'; end if;
+  insert into public.department_items(department_id,item_id,status,is_explicit) values(target_department_id,target_item_id,'pending',false)
+  on conflict(department_id,item_id) do update set updated_at=now()
+  returning id into link_id;
+  return link_id;
+end; $$;
+create or replace function public.bootstrap_stock_workspace(org_code text,org_name text,dept_code text,dept_name text)
+returns table(organization_id uuid,department_id uuid,role text)
+language plpgsql security definer set search_path=public,auth as $$
+declare new_org_id uuid; new_department_id uuid;
+begin
+  if auth.uid() is null then raise exception 'Authentication required'; end if;
+  if exists(select 1 from public.organizations) then raise exception 'Workspace already initialized'; end if;
+  if btrim(coalesce(org_code,''))='' or btrim(coalesce(org_name,''))='' or btrim(coalesce(dept_code,''))='' or btrim(coalesce(dept_name,''))='' then raise exception 'Organization and department data are required'; end if;
+  insert into public.organizations(code,name) values(btrim(org_code),btrim(org_name)) returning id into new_org_id;
+  insert into public.departments(organization_id,code,name) values(new_org_id,btrim(dept_code),btrim(dept_name)) returning id into new_department_id;
+  insert into public.profiles(id,email,full_name,avatar_url,last_login_at)
+  select id,coalesce(email,''),coalesce(raw_user_meta_data->>'full_name',raw_user_meta_data->>'name',email,''),coalesce(raw_user_meta_data->>'avatar_url',raw_user_meta_data->>'picture'),now() from auth.users where id=auth.uid()
+  on conflict(id) do update set email=excluded.email,full_name=excluded.full_name,avatar_url=excluded.avatar_url,last_login_at=now(),updated_at=now();
+  insert into public.organization_members(organization_id,user_id,role,status) values(new_org_id,auth.uid(),'admin','active');
+  insert into public.department_members(department_id,user_id,role,status) values(new_department_id,auth.uid(),'admin','active');
+  if to_regclass('public.platform_admins') is not null then
+    execute 'insert into public.platform_admins(user_id) values($1) on conflict(user_id) do nothing' using auth.uid();
+  end if;
+  return query select new_org_id,new_department_id,'admin'::text;
+end; $$;
+create or replace function public.clear_organization_inventory(target_organization_id uuid)
+returns integer language plpgsql security definer set search_path=public as $$
+declare deleted_count integer; platform_allowed boolean:=false;
+begin
+  if to_regprocedure('public.is_super_admin()') is not null then execute 'select public.is_super_admin()' into platform_allowed; end if;
+  if not platform_allowed and not public.is_organization_admin(target_organization_id) then raise exception 'Admin access required'; end if;
+  delete from public.items where organization_id=target_organization_id;
+  get diagnostics deleted_count=row_count;
+  return deleted_count;
+end; $$;
 create or replace function public.join_stock_department(target_department_id uuid) returns text
 language plpgsql security definer set search_path=public,auth as $$
 declare target_org uuid; selected_role text; current_email text;
@@ -114,6 +157,9 @@ using(exists(select 1 from public.opening_stock_counts c join public.department_
 with check(exists(select 1 from public.opening_stock_counts c join public.department_items di on di.id=c.department_item_id where c.id=opening_stock_entries.count_id and public.has_department_access(di.department_id)));
 
 grant execute on function public.join_stock_department(uuid) to authenticated;
+grant execute on function public.ensure_department_item(uuid,text) to authenticated;
+grant execute on function public.bootstrap_stock_workspace(text,text,text,text) to authenticated;
+grant execute on function public.clear_organization_inventory(uuid) to authenticated;
 grant select,insert,update on public.items,public.item_packages,public.department_items,public.member_access_rules to authenticated;
 grant select,insert,update,delete on public.opening_stock_counts,public.opening_stock_entries to authenticated;
 commit;

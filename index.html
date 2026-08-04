@@ -22,11 +22,14 @@ try{document.documentElement.dataset.theme=localStorage.getItem('bms-theme')||'n
 <link rel="stylesheet" href="src/components/form/form.css">
 <link rel="stylesheet" href="src/modules/stock-count/stock-count.css">
 <link rel="stylesheet" href="src/modules/stock-count/stock-count-auth.css">
+<link rel="stylesheet" href="src/modules/dashboard/dashboard.css">
 <link rel="stylesheet" href="src/modules/duplicate-check/duplicate-check.css">
+<link rel="stylesheet" href="src/modules/super-admin/super-admin.css">
 <link rel="stylesheet" href="styles/responsive.css">
 </head>
 <body>
-<div id="app">
+<div id="globalAuthRoot"></div>
+<div id="app" hidden>
   <div class="app-shell">
     <aside class="app-nav" aria-label="เมนูหลัก">
       <div class="app-nav-brand">
@@ -34,29 +37,36 @@ try{document.documentElement.dataset.theme=localStorage.getItem('bms-theme')||'n
         <span class="app-nav-title">BMS Inventory</span>
       </div>
       <nav class="app-nav-list">
-        <button class="app-nav-item active" data-module="lot-formatter" type="button">
-          <span class="app-nav-icon">📦</span>
-          <span class="app-nav-label">จัดสต็อกตาม LOT</span>
+        <button class="app-nav-item" data-module="dashboard" type="button">
+          <span class="app-nav-icon">▦</span>
+          <span class="app-nav-label">Dashboard</span>
         </button>
-        <button class="app-nav-item" data-module="stock-count" type="button">
+        <button class="app-nav-item active" data-module="stock-count" type="button">
           <span class="app-nav-icon">🔢</span>
           <span class="app-nav-label">นับสต็อก</span>
-          <span class="app-nav-badge">Mobile</span>
+        </button>
+        <button class="app-nav-item" data-module="lot-formatter" type="button">
+          <span class="app-nav-icon">📦</span>
+          <span class="app-nav-label">จัดสต็อกตาม LOT</span>
         </button>
         <button class="app-nav-item" data-module="duplicate-check" type="button">
           <span class="app-nav-icon">🔎</span>
           <span class="app-nav-label">ตรวจสอบรายการซ้ำ</span>
-          <span class="app-nav-badge">Review</span>
+        </button>
+        <button class="app-nav-item" data-module="super-admin" type="button" hidden>
+          <span class="app-nav-icon">⚙️</span>
+          <span class="app-nav-label">จัดการข้อมูลพื้นฐาน</span>
         </button>
       </nav>
+      <div class="app-account" id="appAccount" hidden></div>
     </aside>
 
     <div class="app-main">
       <div class="topbar">
         <div class="brand">
           <div>
-            <h1 id="moduleTitle">Stock Lot Formatter</h1>
-            <p id="moduleSubtitle">จัดรูปแบบไฟล์สต็อกตามรายการสินค้าและ LOT — ห้องจ่ายยา</p>
+            <h1 id="moduleTitle">Mobile Stock Count</h1>
+            <p id="moduleSubtitle">เดินนับยาในห้องจ่ายยาด้วยมือถือหรือ iPad — รองรับหลาย Package, LOT และ EXP</p>
           </div>
         </div>
         <div class="topbar-actions">
@@ -73,7 +83,7 @@ try{document.documentElement.dataset.theme=localStorage.getItem('bms-theme')||'n
         </div>
       </div>
 
-      <div class="module-panel" data-module-panel="lot-formatter">
+      <div class="module-panel" data-module-panel="lot-formatter" hidden>
         <div class="app-workspace">
           <aside class="wizard-sidebar" aria-label="ขั้นตอนการทำงาน">
             <div class="stepper" id="stepper"></div>
@@ -91,12 +101,20 @@ try{document.documentElement.dataset.theme=localStorage.getItem('bms-theme')||'n
         </div>
       </div>
 
-      <div class="module-panel" data-module-panel="stock-count" hidden>
+      <div class="module-panel" data-module-panel="stock-count">
         <div id="stockCountRoot"></div>
+      </div>
+
+      <div class="module-panel" data-module-panel="dashboard" hidden>
+        <div id="dashboardRoot"></div>
       </div>
 
       <div class="module-panel" data-module-panel="duplicate-check" hidden>
         <div id="duplicateCheckRoot"></div>
+      </div>
+
+      <div class="module-panel" data-module-panel="super-admin" hidden>
+        <div id="superAdminRoot"></div>
       </div>
     </div>
   </div>
@@ -151,7 +169,9 @@ try{document.documentElement.dataset.theme=localStorage.getItem('bms-theme')||'n
 
 <!-- other top-level menus -->
 <script src="src/modules/stock-count/stock-count.page.js"></script>
+<script src="src/modules/dashboard/dashboard.page.js"></script>
 <script src="src/modules/duplicate-check/duplicate-check.page.js"></script>
+<script src="src/modules/super-admin/super-admin.page.js"></script>
 
 <!-- wizard router + boot -->
 <script src="src/wizard-router.js"></script>

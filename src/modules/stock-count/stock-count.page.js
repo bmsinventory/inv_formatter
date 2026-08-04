@@ -10,6 +10,7 @@ window.SLF = window.SLF || {};
   let authSession=null;
   let userProfile=null;
   let workspace=null;
+  let stopLiveSync=null;
 
   function loadState(){
     try{
@@ -68,12 +69,15 @@ window.SLF = window.SLF || {};
     const d = new Date(v);
     return isNaN(d) ? v : d.toLocaleDateString('th-TH',{day:'2-digit',month:'2-digit',year:'numeric'});
   }
-  function countFor(code){
-    return state.counts[code] || {status:'pending',lots:[],note:''};
+  function itemKey(item){return String(item&&typeof item==='object'?(item.itemId||item.code):item||'');}
+  function countFor(item){
+    return state.counts[itemKey(item)] || (item&&typeof item==='object'?state.counts[item.code]:null) || {status:'pending',lots:[],note:''};
   }
   function totalFor(item){
-    return countFor(item.code).lots.reduce((sum,l)=>sum + item.packages.reduce((s,p)=>s+(Number(l.qty && l.qty[p.size])||0)*p.size,0),0);
+    return countFor(item).lots.reduce((sum,l)=>sum + item.packages.reduce((s,p)=>s+(Number(l.qty && l.qty[p.size])||0)*p.size,0),0);
   }
+  function valueFor(item){return totalFor(item)*(Number(item.unitPrice)||0);}
+  function formatMoney(value){return new Intl.NumberFormat('th-TH',{style:'currency',currency:'THB',minimumFractionDigits:2}).format(Number(value)||0);}
   function statusLabel(status){
     return {done:'นับแล้ว',review:'ต้องตรวจสอบ',missing:'ไม่พบสินค้า',pending:'ยังไม่ได้นับ'}[status] || 'ยังไม่ได้นับ';
   }
@@ -96,12 +100,12 @@ window.SLF = window.SLF || {};
     try{
       authSession=await SLF.auth.session();
       if(!authSession){renderLogin();return;}
-      userProfile=await SLF.auth.profile(authSession.user.id);
       const saved=SLF.auth.savedWorkspace();
-      const memberships=await SLF.auth.memberships(authSession.user.id);
+      const [profile,memberships,isSuperAdmin]=await Promise.all([SLF.auth.profile(authSession.user.id),SLF.auth.memberships(authSession.user.id),SLF.auth.superAdminStatus()]);userProfile=profile;
+      const superAdminNav=document.querySelector('[data-module="super-admin"]');if(superAdminNav)superAdminNav.hidden=!isSuperAdmin;
       const selected=memberships.find(m=>m.department&&saved&&m.department.id===saved.departmentId);
-      if(selected){activateWorkspace(selected);return;}
-      if(memberships.length===1){activateWorkspace(memberships[0]);return;}
+      if(selected){await activateWorkspace(selected);return;}
+      if(memberships.length===1){await activateWorkspace(memberships[0]);return;}
       await renderWorkspacePicker();
     }catch(error){renderLogin('ยังเชื่อมต่อระบบผู้ใช้งานไม่ได้ กรุณาตรวจสอบการตั้งค่า Supabase และตารางฐานข้อมูล');}
   }
@@ -109,10 +113,11 @@ window.SLF = window.SLF || {};
     workspace={organization:membership.department.organization,department:membership.department,role:membership.role};
     state.role=workspace.role==='admin'?'admin':'counter';
     state.session.counter=userProfile?.full_name||authSession.user.email||'';
-    rootEl.innerHTML='<div class="sc-auth-loading">กำลังโหลดข้อมูลของหน่วยงาน...</div>';
-    try{state.items=await SLF.auth.departmentItems(workspace.department.id);}catch(error){state.items=[];}
-    try{state.counts=await SLF.auth.countResults(workspace.department.id);}catch(error){state.counts={};}
     renderShell();
+    const [items,counts]=await Promise.all([SLF.auth.departmentItems(workspace.department.id).catch(()=>state.items||[]),SLF.auth.countResults(workspace.department.id).catch(()=>state.counts||{})]);state.items=items;state.counts=counts;
+    if(stopLiveSync)stopLiveSync();stopLiveSync=SLF.auth.subscribeDepartment(workspace.department.id,async()=>{const [freshItems,freshCounts]=await Promise.all([SLF.auth.departmentItems(workspace.department.id),SLF.auth.countResults(workspace.department.id)]);state.items=freshItems;state.counts=freshCounts;saveState();renderShell();});
+    if(SLF.appShell?.refreshAccount)SLF.appShell.refreshAccount();
+    saveState();renderShell();
   }
   function renderLogin(message){
     rootEl.innerHTML=`<section class="sc-auth-page"><article class="sc-auth-card">
@@ -140,7 +145,10 @@ window.SLF = window.SLF || {};
       rootEl.innerHTML=`<section class="sc-auth-page"><article class="sc-auth-card sc-workspace-card">
         <h2>เลือกพื้นที่ทำงาน</h2><p>เลือกโรงพยาบาลและหน่วยงานสำหรับตั้งต้นยอด Stock</p>
         <div class="sc-user-summary">${avatar?`<img src="${esc(avatar)}" alt="">`:''}<div><strong>${esc(meta.full_name||meta.name||user.email)}</strong><span>${esc(user.email||'')}</span></div></div>
-        <div class="sc-workspace-list">${choices.length?choices.map(({org,department})=>`<button data-org="${esc(org.id)}" data-dept="${esc(department.id)}"><span><strong>${esc(department.name)}</strong><small>${esc(org.name)}</small></span><b>→</b></button>`).join(''):'<div class="sc-empty">ยังไม่มีโรงพยาบาลและหน่วยงานในระบบ</div>'}</div>
+        <div class="sc-workspace-list">${choices.length?choices.map(({org,department})=>`<button data-org="${esc(org.id)}" data-dept="${esc(department.id)}"><span><strong>${esc(department.name)}</strong><small>${esc(org.name)}</small></span><b>→</b></button>`).join(''):`<div class="sc-empty"><strong>ยังไม่มีโรงพยาบาลและหน่วยงานในระบบ</strong><p>ผู้ดูแลระบบคนแรกสามารถนำเข้า Organizations และ Departments เพื่อเริ่มต้นระบบได้</p></div>
+          <button class="btn" id="scBootstrapTemplate">ดาวน์โหลด Template ข้อมูลพื้นฐาน</button>
+          <label class="sc-upload" for="scBootstrapFile"><input id="scBootstrapFile" type="file" accept=".xlsx,.xls"><span class="sc-upload-icon">⇧</span><strong>เลือกไฟล์ที่กรอกแล้วเพื่อนำเข้า</strong><small>สร้างโรงพยาบาล หน่วยงาน และนำเข้าข้อมูลต่อจากไฟล์เดียวกัน</small></label>
+          <div id="scBootstrapStatus" class="sc-auth-error" hidden></div>`}</div>
         <button class="btn" id="scWorkspaceSignOut">ออกจากระบบ</button>
       </article></section>`;
       rootEl.querySelectorAll('[data-dept]').forEach(button=>button.onclick=async()=>{
@@ -151,18 +159,53 @@ window.SLF = window.SLF || {};
           const selected=choices.find(c=>c.department.id===button.dataset.dept);
           workspace={organization:selected.org,department:selected.department,role:joinedRole};
           state.role=joinedRole==='admin'?'admin':'counter';state.session.counter=userProfile?.full_name||user.email||'';
+          if(SLF.appShell?.refreshAccount)SLF.appShell.refreshAccount();
           renderShell();
         }catch(error){button.disabled=false;alert('ไม่สามารถเข้าร่วมหน่วยงานได้ กรุณาตรวจสอบฐานข้อมูล');}
       });
+      const bootstrapTemplate=rootEl.querySelector('#scBootstrapTemplate');if(bootstrapTemplate)bootstrapTemplate.onclick=downloadMasterTemplate;
+      const bootstrapFile=rootEl.querySelector('#scBootstrapFile');if(bootstrapFile)bootstrapFile.onchange=e=>bootstrapWorkspaceFromFile(e.target.files[0]);
       rootEl.querySelector('#scWorkspaceSignOut').onclick=async()=>{await SLF.auth.signOut();authSession=null;workspace=null;renderLogin();};
     }catch(error){renderLogin('ยังโหลดรายชื่อโรงพยาบาลและหน่วยงานไม่ได้');}
   }
 
+  function bootstrapWorkspaceFromFile(file){
+    if(!file)return;
+    const reader=new FileReader();
+    reader.onerror=()=>{const status=rootEl.querySelector('#scBootstrapStatus');if(status){status.hidden=false;status.textContent='ไม่สามารถอ่านไฟล์นี้ได้';}};
+    reader.onload=e=>{
+      try{
+        const wb=XLSX.read(e.target.result,{type:'array'}),organizations=rowsFromSheet(wb,'Organizations'),departments=rowsFromSheet(wb,'Departments');
+        const orgRow=organizations[0];if(!orgRow)throw new Error('ไม่พบข้อมูลใน Sheet Organizations');
+        const organization={code:valueOf(orgRow,'organization_code'),name:valueOf(orgRow,'organization_name')};
+        const deptRow=departments.find(row=>valueOf(row,'organization_code')===organization.code)||departments[0];
+        if(!organization.code||!organization.name||!deptRow)throw new Error('ข้อมูล Organizations หรือ Departments ไม่สมบูรณ์');
+        const department={code:valueOf(deptRow,'department_code'),name:valueOf(deptRow,'department_name')};
+        if(!department.code||!department.name)throw new Error('ข้อมูล Department ไม่สมบูรณ์');
+        showBootstrapPreview(organization,department,wb);
+      }catch(error){const status=rootEl.querySelector('#scBootstrapStatus');if(status){status.hidden=false;status.textContent=error.message;}}
+    };
+    reader.readAsArrayBuffer(file);
+  }
+  function showBootstrapPreview(organization,department,workbook){
+    const modalRoot=document.getElementById('modalRoot');
+    modalRoot.innerHTML=`<div class="overlay"><div class="modal"><h3>ยืนยันเริ่มต้นระบบ</h3><p>สร้างโรงพยาบาล <strong>${esc(organization.name)}</strong> (${esc(organization.code)}) และหน่วยงาน <strong>${esc(department.name)}</strong> (${esc(department.code)}) โดยบัญชีปัจจุบันจะเป็น Admin</p><div class="row"><button class="btn" id="scCancelBootstrap">ยกเลิก</button><button class="btn btn-primary" id="scConfirmBootstrap">ยืนยันนำเข้าข้อมูล</button></div></div></div>`;
+    modalRoot.querySelector('#scCancelBootstrap').onclick=()=>modalRoot.innerHTML='';
+    modalRoot.querySelector('#scConfirmBootstrap').onclick=async()=>{
+      const button=modalRoot.querySelector('#scConfirmBootstrap');button.disabled=true;button.textContent='กำลังสร้าง...';
+      try{
+        await SLF.auth.bootstrapWorkspace(organization,department);modalRoot.innerHTML='';userProfile=await SLF.auth.profile(authSession.user.id);await bootAuth();
+        if(workbook.SheetNames.includes('Items')&&rowsFromSheet(workbook,'Items').length)showMasterImportPreview(prepareMasterWorkbook(workbook));
+      }
+      catch(error){modalRoot.innerHTML='';const status=rootEl.querySelector('#scBootstrapStatus');if(status){status.hidden=false;status.textContent=String(error?.message||error);}}
+    };
+  }
+
   function renderShell(){
     const scopedItems=activeItems();
-    const done = scopedItems.filter(i=>countFor(i.code).status==='done').length;
-    const reviewed = scopedItems.filter(i=>countFor(i.code).status==='review').length;
-    const missing = scopedItems.filter(i=>countFor(i.code).status==='missing').length;
+    const done = scopedItems.filter(i=>countFor(i).status==='done').length;
+    const reviewed = scopedItems.filter(i=>countFor(i).status==='review').length;
+    const missing = scopedItems.filter(i=>countFor(i).status==='missing').length;
     const progress = scopedItems.length ? Math.round(((done+reviewed+missing)/scopedItems.length)*100) : 0;
     const isAdmin = workspace?.role==='admin'&&state.role==='admin';
     rootEl.innerHTML = `
@@ -174,10 +217,7 @@ window.SLF = window.SLF || {};
             <p>${isAdmin?'สำหรับผู้ดูแลข้อมูล: นำเข้าและตรวจรายการยาก่อนเปิดรอบนับ':'สำหรับผู้ตรวจนับ: ค้นหายา บันทึก Package, LOT และ EXP จากหน้าชั้นยา'}</p>
           </div>
           <div class="sc-hero-actions">
-            <div class="sc-user-menu">${authSession?.user?.user_metadata?.avatar_url?`<img src="${esc(authSession.user.user_metadata.avatar_url)}" alt="">`:''}<span>${esc(workspace?.department?.name||'')}</span><button id="scChangeWorkspace" title="เปลี่ยนหน่วยงาน">สลับ</button><button id="scSignOut" title="ออกจากระบบ">ออก</button></div>
-            <div class="sc-role-badge">${workspace?.role==='admin'?'⚙ Admin':workspace?.role==='staff'?'● Staff':'● User'}</div>
             ${workspace?.role==='admin'?`<button class="sc-role-switch" id="scRoleSwitch">${isAdmin?'← กลับหน้าผู้ตรวจนับ':'⚙ ข้อมูลตั้งต้น'}</button>`:''}
-            <div class="sc-sync"><span></span> เก็บในเครื่อง</div>
           </div>
         </header>
         ${isAdmin ? `
@@ -202,7 +242,7 @@ window.SLF = window.SLF || {};
   function startView(){
     const currentArea=state.session.area||'ทั้งหมด';
     const areaOptions=['ทั้งหมด',...areas()].map(a=>`<option value="${esc(a)}" ${a===currentArea?'selected':''}>${esc(a)}</option>`).join('');
-    const active=activeItems(), completed=active.filter(i=>countFor(i.code).status!=='pending').length;
+    const active=activeItems(), completed=active.filter(i=>countFor(i).status!=='pending').length;
     return `<div class="sc-start-layout">
       <article class="sc-card sc-session-card">
         <div class="sc-card-head"><span class="sc-icon">▶</span><div><h3>เริ่มรอบตรวจนับ</h3><p>เลือกพื้นที่ก่อนเดินไปที่ชั้นยา</p></div></div>
@@ -242,10 +282,11 @@ window.SLF = window.SLF || {};
           </label>
           <div class="sc-import-hint">
             <strong>คอลัมน์ที่แนะนำ</strong>
-            <div class="sc-chips"><span>รหัสยา</span><span>ชื่อยา</span><span>ตำแหน่ง</span><span>หน่วยบรรจุ</span><span>ขนาดบรรจุ</span><span>Barcode</span><span>LOT</span><span>EXP</span></div>
+            <div class="sc-chips"><span>รหัสยา</span><span>ชื่อยา</span><span>ราคาต่อหน่วย</span><span>ตำแหน่ง</span><span>หน่วยบรรจุ</span><span>ขนาดบรรจุ</span><span>Barcode</span><span>LOT</span><span>EXP</span></div>
           </div>
           <div class="sc-import-actions">
             <button class="btn" id="scDownloadMasterTemplate">ดาวน์โหลด Template ข้อมูลพื้นฐาน</button>
+            <button class="btn btn-danger" id="scClearOrganizationData">เคลียร์ข้อมูลโรงพยาบาลนี้</button>
             <span id="scImportStatus">ข้อมูลจะถูกเก็บในอุปกรณ์นี้</span>
           </div>
         </article>
@@ -256,7 +297,7 @@ window.SLF = window.SLF || {};
             <div><strong>${new Set(state.items.map(i=>i.location.split('·')[0].trim())).size}</strong><span>พื้นที่จัดเก็บ</span></div>
             <div><strong>${state.items.reduce((n,i)=>n+i.packages.length,0)}</strong><span>รูปแบบบรรจุ</span></div>
           </div>
-          <label class="sc-search"><span>⌕</span><input id="scMasterSearch" value="${esc(state.search)}" placeholder="ค้นหารหัส ชื่อยา หรือตำแหน่ง"></label>
+          <label class="sc-search"><span>⌕</span><input id="scMasterSearch" value="${esc(state.search)}" placeholder="ค้นหา item_code หรือ item_name"></label>
           <div class="sc-master-list">${masterRows()}</div>
             <button class="btn btn-primary sc-start-btn" id="scStartCount" ${state.items.length?'':'disabled'}>ตรวจเสร็จแล้ว กลับหน้าเดินนับ <span>→</span></button>
         </article>
@@ -265,7 +306,7 @@ window.SLF = window.SLF || {};
 
   function masterRows(){
     const q = state.search.toLowerCase().trim();
-    const rows = state.items.filter(i=>!q||`${i.code} ${i.name} ${i.location}`.toLowerCase().includes(q)).slice(0,30);
+    const rows = state.items.filter(i=>!q||`${i.code} ${i.name}`.toLowerCase().includes(q)).slice(0,30);
     if(!rows.length) return '<div class="sc-empty">ไม่พบรายการที่ค้นหา</div>';
     return rows.map(i=>`<div class="sc-master-row">
       <div class="sc-drug-mark">${esc(i.code.slice(0,2))}</div>
@@ -280,15 +321,15 @@ window.SLF = window.SLF || {};
     if(!active.length) return '<div class="sc-card sc-empty">ไม่พบรายการยาในพื้นที่ที่เลือก กรุณากลับไปเลือกพื้นที่ใหม่</div>';
     if(!active.includes(state.items[state.countIndex])) state.countIndex=state.items.indexOf(active[0]);
     const item = state.items[state.countIndex];
-    const count = countFor(item.code);
+    const count = countFor(item);
     const lots = count.lots.length ? count.lots : [{lot:'',exp:'',qty:{}}];
-    const complete = active.filter(i=>countFor(i.code).status!=='pending').length;
+    const complete = active.filter(i=>countFor(i).status!=='pending').length;
     return `
       <div class="sc-count-layout">
         <aside class="sc-queue sc-card">
           <div class="sc-queue-head"><strong>${esc(state.session.area||'รายการทั้งหมด')}</strong><span>${complete}/${active.length}</span></div>
           <div class="sc-progress"><i style="width:${active.length?complete/active.length*100:0}%"></i></div>
-          <label class="sc-search compact"><span>⌕</span><input id="scQueueSearch" value="${esc(state.queueSearch||'')}" autocomplete="off" enterkeyhint="search" placeholder="ค้นหาชื่อยา รหัส Barcode หรือตำแหน่ง"></label>
+          <label class="sc-search compact"><span>⌕</span><input id="scQueueSearch" value="${esc(state.queueSearch||'')}" autocomplete="off" enterkeyhint="search" placeholder="ค้นหา item_code หรือ item_name"></label>
           <div class="sc-queue-list">${queueRows()}</div>
         </aside>
         <article class="sc-count-card sc-card" data-code="${esc(item.code)}">
@@ -298,11 +339,11 @@ window.SLF = window.SLF || {};
           </div>
           <div class="sc-drug-title">
             <div class="sc-drug-mark large">${esc(item.code.slice(0,2))}</div>
-            <div><span>${esc(item.code)}</span><h3>${esc(item.name)}</h3><small>หน่วยเล็กสุด: ${esc(item.baseUnit)}</small></div>
+            <div><span>${esc(item.code)}</span><h3>${esc(item.name)}</h3><small>หน่วยเล็กสุด: ${esc(item.baseUnit)} · ราคาต่อหน่วย ${formatMoney(item.unitPrice)}</small></div>
           </div>
           <div class="sc-lot-list">${lots.map((l,idx)=>lotCard(item,l,idx)).join('')}</div>
           <button class="sc-add-lot" id="scAddLot">＋ เพิ่ม LOT ที่พบ</button>
-          <div class="sc-count-total"><div><span>รวมทั้งหมด</span><small>คำนวณจากทุก Package และทุก LOT</small></div><strong id="scGrandTotal">${totalFromLots(item,lots).toLocaleString()} <small>${esc(item.baseUnit)}</small></strong></div>
+          <div class="sc-count-total"><div><span>รวมทั้งหมด</span><small id="scGrandValue">มูลค่า ${formatMoney(totalFromLots(item,lots)*(Number(item.unitPrice)||0))}</small></div><strong id="scGrandTotal">${totalFromLots(item,lots).toLocaleString()} <small>${esc(item.baseUnit)}</small></strong></div>
           <label class="sc-note"><span>หมายเหตุ</span><input id="scCountNote" value="${esc(count.note)}" placeholder="เช่น พบยาวางผิดตำแหน่ง"></label>
           <div class="sc-count-actions">
             <button class="btn sc-missing" id="scMissing"><span aria-hidden="true">∅</span> ไม่พบ</button>
@@ -340,7 +381,7 @@ window.SLF = window.SLF || {};
     if(!matches.length) return '<div class="sc-empty sc-queue-empty">ไม่พบรายการที่ค้นหา</div>';
     return matches.map(i=>{
       const idx=state.items.indexOf(i);
-      const c=countFor(i.code);
+      const c=countFor(i);
       return `<button class="sc-queue-row ${idx===state.countIndex?'active':''} ${c.status}" data-index="${idx}">
         <span class="sc-status-dot">${c.status==='done'?'✓':c.status==='review'?'!':c.status==='missing'?'−':idx+1}</span>
         <span><strong>${esc(i.name)}</strong><small>${esc(i.code)} · ${esc(i.location)}</small></span>
@@ -352,14 +393,14 @@ window.SLF = window.SLF || {};
     return String(value == null ? '' : value).normalize('NFKC').trim().toLocaleLowerCase('th-TH').replace(/\s+/g,' ');
   }
   function searchText(item){
-    return normalizeSearch([item.code,item.name,item.barcode,item.location,item.baseUnit].filter(Boolean).join(' '));
+    return normalizeSearch([item.code,item.name].filter(Boolean).join(' '));
   }
 
   function progressView(){
     const scoped=activeItems();
     const statuses=['done','review','missing','pending'];
-    const nums=Object.fromEntries(statuses.map(s=>[s,scoped.filter(i=>countFor(i.code).status===s).length]));
-    const filtered=scoped.filter(i=>state.progressFilter==='all'||!state.progressFilter||countFor(i.code).status===state.progressFilter);
+    const nums=Object.fromEntries(statuses.map(s=>[s,scoped.filter(i=>countFor(i).status===s).length]));
+    const filtered=scoped.filter(i=>state.progressFilter==='all'||!state.progressFilter||countFor(i).status===state.progressFilter);
     return `<div class="sc-progress-view">
       <div class="sc-stat-grid">
         <button data-filter="all"><strong>${scoped.length}</strong><span>ทั้งหมด</span></button>
@@ -369,17 +410,13 @@ window.SLF = window.SLF || {};
         <button data-filter="pending"><strong>${nums.pending}</strong><span>ยังไม่ได้นับ</span></button>
       </div>
       <article class="sc-card">
-        <div class="sc-card-head"><span class="sc-icon alt">≡</span><div><h3>รายการตรวจนับ</h3><p>แตะรายการเพื่อกลับไปแก้ไขข้อมูล</p></div></div>
-        <div class="sc-result-list">${filtered.map(i=>{const c=countFor(i.code);return `<button data-open-code="${esc(i.code)}"><span class="sc-status-dot ${c.status}">${c.status==='done'?'✓':c.status==='review'?'!':c.status==='missing'?'−':'○'}</span><span><strong>${esc(i.name)}</strong><small>${esc(i.code)} · ${esc(i.location)}</small></span><span class="sc-result-total">${totalFor(i).toLocaleString()} ${esc(i.baseUnit)}<small>${statusLabel(c.status)}</small></span></button>`}).join('')}</div>
+        <div class="sc-card-head"><span class="sc-icon alt">≡</span><div><h3>รายการตรวจนับ</h3><p>มูลค่ารวม ${formatMoney(scoped.reduce((sum,item)=>sum+valueFor(item),0))} · แตะรายการเพื่อกลับไปแก้ไขข้อมูล</p></div></div>
+        <div class="sc-result-list">${filtered.map(i=>{const c=countFor(i);return `<button data-open-id="${esc(itemKey(i))}"><span class="sc-status-dot ${c.status}">${c.status==='done'?'✓':c.status==='review'?'!':c.status==='missing'?'−':'○'}</span><span><strong>${esc(i.name)}</strong><small>${esc(i.code)} · ${esc(i.location)}</small></span><span class="sc-result-total">${totalFor(i).toLocaleString()} ${esc(i.baseUnit)}<small>${formatMoney(valueFor(i))} · ${statusLabel(c.status)}</small></span></button>`}).join('')}</div>
       </article>
     </div>`;
   }
 
   function bindCommon(){
-    const changeWorkspace=rootEl.querySelector('#scChangeWorkspace');
-    if(changeWorkspace)changeWorkspace.onclick=()=>renderWorkspacePicker();
-    const signOut=rootEl.querySelector('#scSignOut');
-    if(signOut)signOut.onclick=async()=>{await SLF.auth.signOut();authSession=null;workspace=null;renderLogin();};
     rootEl.querySelectorAll('.sc-tabs button').forEach(b=>b.onclick=()=>{
       if(b.dataset.view==='count'&&!state.session.startedAt){state.view='start';}
       else state.view=b.dataset.view;
@@ -402,7 +439,7 @@ window.SLF = window.SLF || {};
       state.session.counter=rootEl.querySelector('#scCounterName').value.trim()||'ผู้ตรวจนับ';
       state.session.area=area.value;
       state.session.startedAt=state.session.startedAt||new Date().toISOString();
-      const first=activeItems().find(i=>countFor(i.code).status==='pending')||activeItems()[0];
+      const first=activeItems().find(i=>countFor(i).status==='pending')||activeItems()[0];
       if(first) state.countIndex=state.items.indexOf(first);
       state.view='count';saveState();renderShell();
     };
@@ -411,6 +448,14 @@ window.SLF = window.SLF || {};
     const search=rootEl.querySelector('#scMasterSearch');
     search.oninput=()=>{state.search=search.value;rootEl.querySelector('.sc-master-list').innerHTML=masterRows();};
     rootEl.querySelector('#scDownloadMasterTemplate').onclick=downloadMasterTemplate;
+    rootEl.querySelector('#scClearOrganizationData').onclick=()=>{
+      const organizationName=workspace.organization.name;
+      SLF.components.confirmModal('เคลียร์ข้อมูลโรงพยาบาล',`ต้องการลบ Items, Packages, รายการผูกหน่วยงาน, ผลนับ และ LOT ทั้งหมดของ <strong>${esc(organizationName)}</strong> ใช่หรือไม่? โรงพยาบาล หน่วยงาน และผู้ใช้งานจะยังอยู่`,async()=>{
+        const status=rootEl.querySelector('#scImportStatus');if(status)status.textContent='กำลังเคลียร์ข้อมูล...';
+        try{const deleted=await SLF.auth.clearOrganizationData(workspace.organization.id);state.items=[];state.counts={};state.search='';saveState();renderShell();const current=rootEl.querySelector('#scImportStatus');if(current)current.textContent=`เคลียร์ข้อมูล ${deleted} รายการเรียบร้อยแล้ว`;}
+        catch(error){const current=rootEl.querySelector('#scImportStatus');if(current)current.textContent=`เคลียร์ข้อมูลไม่สำเร็จ — ${String(error?.message||error)}`;}
+      },'ยืนยันเคลียร์ข้อมูล');
+    };
     rootEl.querySelector('#scStartCount').onclick=()=>{state.role='counter';state.view='start';state.countIndex=0;saveState();renderShell();};
     rootEl.querySelector('#scMasterFile').onchange=e=>importMaster(e.target.files[0]);
   }
@@ -418,7 +463,7 @@ window.SLF = window.SLF || {};
     if(!rootEl.querySelector('.sc-count-card')) return;
     const bindQueueRows=()=>rootEl.querySelectorAll('.sc-queue-row').forEach(b=>b.onclick=()=>{
         const current=state.items[state.countIndex];
-        saveCurrent(countFor(current.code).status);
+        saveCurrent(countFor(current).status);
         state.countIndex=Number(b.dataset.index);
         state.queueSearch='';
         saveState();renderShell();
@@ -462,24 +507,25 @@ window.SLF = window.SLF || {};
     });
   }
   function putDraft(lots){
-    const item=state.items[state.countIndex], old=countFor(item.code);
-    state.counts[item.code]={...old,lots};saveState();
+    const item=state.items[state.countIndex], old=countFor(item);
+    state.counts[itemKey(item)]={...old,lots};saveState();
   }
   function saveCurrent(status){
     const item=state.items[state.countIndex];
     const lots=readCurrentLots(),note=rootEl.querySelector('#scCountNote').value.trim();
-    state.counts[item.code]={status,lots,note,counterName:userProfile?.full_name||state.session.counter||''};
+    state.counts[itemKey(item)]={status,lots,note,counterName:userProfile?.full_name||state.session.counter||''};
     saveState();
-    SLF.auth.saveCount(workspace.department.id,item.code,status,lots,note,userProfile?.full_name||state.session.counter||'',item.packages).catch(()=>{syncStatus='offline';updateSyncBadge();});
+    SLF.auth.saveCount(workspace.department.id,item.itemId||item.code,status,lots,note,userProfile?.full_name||state.session.counter||'',item.packages).catch(()=>{syncStatus='offline';updateSyncBadge();});
   }
   function updateTotals(){
     const item=state.items[state.countIndex], lots=readCurrentLots();
     rootEl.querySelectorAll('[data-subtotal]').forEach((el,idx)=>el.textContent=`${lotTotal(item,lots[idx]).toLocaleString()} ${item.baseUnit}`);
     rootEl.querySelector('#scGrandTotal').innerHTML=`${totalFromLots(item,lots).toLocaleString()} <small>${esc(item.baseUnit)}</small>`;
+    rootEl.querySelector('#scGrandValue').textContent=`มูลค่า ${formatMoney(totalFromLots(item,lots)*(Number(item.unitPrice)||0))}`;
   }
   function bindProgress(){
     rootEl.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{state.progressFilter=b.dataset.filter;renderShell();});
-    rootEl.querySelectorAll('[data-open-code]').forEach(b=>b.onclick=()=>{state.countIndex=state.items.findIndex(i=>i.code===b.dataset.openCode);state.view='count';renderShell();});
+    rootEl.querySelectorAll('[data-open-id]').forEach(b=>b.onclick=()=>{state.countIndex=state.items.findIndex(i=>itemKey(i)===b.dataset.openId);state.view='count';renderShell();});
   }
 
   function normalizeHeader(v){ return String(v||'').trim().toLowerCase().replace(/[\s_.()-]/g,''); }
@@ -497,15 +543,36 @@ window.SLF = window.SLF || {};
       'คำแนะนำ':[
         ['BMS Mobile Stock Count - Template ข้อมูลพื้นฐาน'],
         ['กรอกข้อมูลในชีตที่เกี่ยวข้อง ห้ามเปลี่ยนชื่อชีตหรือชื่อคอลัมน์'],
+        ['ไฟล์นี้มีข้อมูลตัวอย่าง 1 แถวในทุกชีต กรุณาแก้ไขหรือลบข้อมูลตัวอย่างก่อนนำเข้า'],
         ['role รองรับเฉพาะ admin, staff, user'],
+        ['อีเมลเดียวดูแลหลายหน่วยงานได้ โดยเพิ่มหลายแถวใน Users และระบุ department_code คนละค่า'],
+        ['ถ้า Department_Items ว่าง หน่วยงานจะเห็น Items ทั้งหมด; ถ้ามีข้อมูล จะเห็นเฉพาะ item_id ที่ผูกไว้'],
         ['package_size ต้องเป็นตัวเลขมากกว่า 0']
       ],
-      'Organizations':[['organization_code','organization_name']],
-      'Departments':[['organization_code','department_code','department_name']],
-      'Items':[['organization_code','item_code','item_name','base_unit','barcode','category']],
-      'Packages':[['organization_code','item_code','package_name','package_size','barcode']],
-      'Department_Items':[['organization_code','department_code','item_code','location']],
-      'Users':[['email','organization_code','department_code','role']]
+      'Organizations':[
+        ['organization_code','organization_name'],
+        ['HOSP-BMS','โรงพยาบาลบีเอ็มเอส']
+      ],
+      'Departments':[
+        ['organization_code','department_code','department_name'],
+        ['HOSP-BMS','PHARMACY','ห้องจ่ายยา']
+      ],
+      'Items':[
+        ['organization_code','item_id','item_code','item_name','base_unit','unit_price','barcode','category'],
+        ['HOSP-BMS','10001','MED001','Paracetamol 500 mg','เม็ด',0.75,'885000000001','ยาเม็ด']
+      ],
+      'Packages':[
+        ['organization_code','item_id','stock_item_unit_id','package_name','package_size','barcode'],
+        ['HOSP-BMS','10001','50001','กล่อง',100,'885000000101']
+      ],
+      'Department_Items':[
+        ['organization_code','department_code','item_id','location'],
+        ['HOSP-BMS','PHARMACY','10001','ตู้ A · ชั้น 1']
+      ],
+      'Users':[
+        ['email','organization_code','department_code','role'],
+        ['pharmacist@example.com','HOSP-BMS','PHARMACY','admin']
+      ]
     };
     Object.entries(sheets).forEach(([name,rows])=>{
       const ws=XLSX.utils.aoa_to_sheet(rows);
@@ -519,21 +586,75 @@ window.SLF = window.SLF || {};
     const ws=wb.Sheets[name];
     return ws?XLSX.utils.sheet_to_json(ws,{defval:'',raw:false}).map(row=>Object.fromEntries(Object.entries(row).map(([key,value])=>[normalizeHeader(key),String(value).trim()]))):[];
   }
-  function valueOf(row,...keys){for(const key of keys){const value=row[normalizeHeader(key)];if(value!=='')return value;}return '';}
-  async function importMasterWorkbook(wb){
-    const itemRows=rowsFromSheet(wb,'Items');
-    if(!itemRows.length) return false;
-    const packageRows=rowsFromSheet(wb,'Packages');
-    const departmentRows=rowsFromSheet(wb,'Department_Items');
+  function valueOf(row,...keys){for(const key of keys){const value=row[normalizeHeader(key)];if(value!=null&&value!=='')return String(value);}return '';}
+  function importErrorMessage(error){
+    const detail=String(error?.message||error?.details||error||'ไม่ทราบสาเหตุ');
+    if(/Item conflict:/i.test(detail))return `ข้อมูล Items ชนกันภายในโรงพยาบาลเดียวกัน — ${detail.replace('Item conflict:','')} กรุณาตรวจสอบว่า item_id และ item_code ระบุรายการเดียวกัน`;
+    if(/column .*item_id|column .*stock_item_unit_id|column .*is_explicit|schema cache/i.test(detail))return `ฐานข้อมูลยังไม่รองรับ Template รุ่นใหม่ กรุณารัน stock-count-v3-item-ids.sql — ${detail}`;
+    if(/row-level security|permission denied|42501/i.test(detail))return `บัญชีนี้ไม่มีสิทธิ์ Admin สำหรับนำเข้าข้อมูล — ${detail}`;
+    if(/Department not found/i.test(detail))return `ไม่พบ department_code ที่ระบุใน Sheet Users — ${detail}`;
+    return `นำเข้าไม่สำเร็จ — ${detail}`;
+  }
+  function prepareMasterWorkbook(wb,targetWorkspace){
+    const activeWorkspace=targetWorkspace||workspace;
+    const organizationCode=String(activeWorkspace.organization.code||'').trim().toUpperCase();
+    const departmentCode=String(activeWorkspace.department.code||'').trim().toUpperCase();
+    const belongsToOrganization=row=>{const code=valueOf(row,'organization_code').toUpperCase();return !code||code===organizationCode;};
+    const belongsToDepartment=row=>{const code=valueOf(row,'department_code').toUpperCase();return !code||code===departmentCode;};
+    const itemRows=rowsFromSheet(wb,'Items').filter(belongsToOrganization);
+    if(!itemRows.length)throw new Error(`ไม่พบ Items ของ organization_code ${activeWorkspace.organization.code} ในไฟล์`);
+    const packageRows=rowsFromSheet(wb,'Packages').filter(belongsToOrganization);
+    const departmentRows=rowsFromSheet(wb,'Department_Items').filter(row=>belongsToOrganization(row)&&belongsToDepartment(row));
+    const userRows=rowsFromSheet(wb,'Users').filter(belongsToOrganization);
     const items=itemRows.map(row=>{
+      const itemId=valueOf(row,'item_id');
       const code=valueOf(row,'item_code','รหัสรายการ','รหัสยา');
-      const packages=packageRows.filter(p=>valueOf(p,'item_code')===code).map(p=>({name:valueOf(p,'package_name','หน่วยบรรจุ')||valueOf(row,'base_unit')||'หน่วย',size:Math.max(1,Number(valueOf(p,'package_size','ขนาดบรรจุ'))||1),barcode:valueOf(p,'barcode')}));
-      const dept=departmentRows.find(d=>valueOf(d,'item_code')===code);
-      return {code,name:valueOf(row,'item_name','ชื่อรายการ','ชื่อยา'),location:dept?valueOf(dept,'location','ตำแหน่ง'):'',barcode:valueOf(row,'barcode'),baseUnit:valueOf(row,'base_unit','หน่วยฐาน')||'หน่วย',category:valueOf(row,'category','ประเภท'),packages:packages.length?packages:[{name:valueOf(row,'base_unit')||'หน่วย',size:1}],lots:[]};
-    }).filter(item=>item.code&&item.name);
+      const baseUnit=valueOf(row,'base_unit','หน่วยฐาน')||'หน่วย';
+      const packages=packageRows.filter(p=>valueOf(p,'item_id')===itemId).map(p=>({stockItemUnitId:valueOf(p,'stock_item_unit_id'),name:valueOf(p,'package_name','หน่วยบรรจุ')||baseUnit,size:Math.max(1,Number(valueOf(p,'package_size','ขนาดบรรจุ'))||1),barcode:valueOf(p,'barcode')}));
+      if(!packages.some(pack=>Number(pack.size)===1))packages.push({stockItemUnitId:'',name:baseUnit,size:1,barcode:''});
+      packages.sort((a,b)=>Number(b.size)-Number(a.size));
+      const dept=departmentRows.find(d=>valueOf(d,'item_id')===itemId);
+      return {itemId,code,name:valueOf(row,'item_name','ชื่อรายการ','ชื่อยา'),departmentLinked:Boolean(dept),location:dept?valueOf(dept,'location','ตำแหน่ง'):'',barcode:valueOf(row,'barcode'),baseUnit,unitPrice:Math.max(0,Number(valueOf(row,'unit_price','ราคาต่อหน่วย').replace(/,/g,''))||0),category:valueOf(row,'category','ประเภท'),packages,lots:[]};
+    }).filter(item=>item.itemId&&item.code&&item.name);
     if(!items.length)throw new Error('ไม่พบข้อมูล Item ที่สมบูรณ์');
-    if(SLF.auth.importMasterData)await SLF.auth.importMasterData(workspace.organization.id,workspace.department.id,{items,itemRows,packageRows,departmentRows,organizationRows:rowsFromSheet(wb,'Organizations'),departments:rowsFromSheet(wb,'Departments'),users:rowsFromSheet(wb,'Users')});
-    state.items=items;state.counts={};state.search='';saveState();renderShell();return true;
+    const itemIdCodes=new Map();
+    items.forEach(item=>{
+      if(itemIdCodes.has(item.itemId)&&itemIdCodes.get(item.itemId)!==item.code)throw new Error(`Item conflict: item_id ${item.itemId} is assigned to both ${itemIdCodes.get(item.itemId)} and ${item.code} in the import file`);
+      itemIdCodes.set(item.itemId,item.code);
+    });
+    const payload={items,itemRows,packageRows,departmentRows,organizationRows:rowsFromSheet(wb,'Organizations').filter(row=>valueOf(row,'organization_code').toUpperCase()===organizationCode),departments:rowsFromSheet(wb,'Departments').filter(belongsToOrganization),users:userRows};
+    return {items,payload};
+  }
+  function showMasterImportPreview(prepared){
+    const modalRoot=document.getElementById('modalRoot');
+    const packageCount=prepared.items.reduce((sum,item)=>sum+item.packages.length,0);
+    const linkedCount=prepared.items.filter(item=>item.departmentLinked).length;
+    modalRoot.innerHTML=`<div class="overlay"><div class="modal sc-import-preview-modal">
+      <h3>ตรวจสอบข้อมูลก่อนนำเข้า</h3>
+      <p>ข้อมูลจะถูกนำเข้าโรงพยาบาล <strong>${esc(workspace.organization.name)}</strong> · หน่วยงาน <strong>${esc(workspace.department.name)}</strong></p>
+      <div class="sc-preview-summary">
+        <div><strong>${prepared.items.length}</strong><span>Items</span></div>
+        <div><strong>${packageCount}</strong><span>Packages</span></div>
+        <div><strong>${linkedCount}</strong><span>รายการที่ผูกหน่วยงาน</span></div>
+        <div><strong>${prepared.payload?.users?.length||0}</strong><span>สิทธิ์ผู้ใช้</span></div>
+      </div>
+      <div class="sc-preview-table-wrap"><table class="data"><thead><tr><th>item_id</th><th>item_code</th><th>item_name</th><th>หน่วย</th><th>ราคาต่อหน่วย</th><th>Package</th><th>ผูกหน่วยงาน</th></tr></thead><tbody>
+        ${prepared.items.map(item=>`<tr><td>${esc(item.itemId)}</td><td>${esc(item.code)}</td><td>${esc(item.name)}</td><td>${esc(item.baseUnit)}</td><td>${formatMoney(item.unitPrice)}</td><td>${item.packages.length}</td><td>${item.departmentLinked?'ใช่':'ไม่'}</td></tr>`).join('')}
+      </tbody></table></div>
+      <div class="row"><button class="btn" id="scCancelImport">ยกเลิก</button><button class="btn btn-primary" id="scConfirmImport">ยืนยันนำเข้าข้อมูล</button></div>
+    </div></div>`;
+    modalRoot.querySelector('#scCancelImport').onclick=()=>{modalRoot.innerHTML='';const input=rootEl.querySelector('#scMasterFile');if(input)input.value='';};
+    modalRoot.querySelector('#scConfirmImport').onclick=async()=>{
+      const confirmButton=modalRoot.querySelector('#scConfirmImport');confirmButton.disabled=true;confirmButton.textContent='กำลังนำเข้า...';
+      try{
+        if(prepared.payload&&SLF.auth.importMasterData)await SLF.auth.importMasterData(workspace.organization.id,workspace.department.id,prepared.payload);
+        modalRoot.innerHTML='';state.items=prepared.items;state.counts={};state.search='';saveState();renderShell();
+      }catch(error){
+        console.error('Master data import failed',error);confirmButton.disabled=false;confirmButton.textContent='ยืนยันนำเข้าข้อมูล';
+        const status=rootEl.querySelector('#scImportStatus');if(status)status.textContent=importErrorMessage(error);
+        modalRoot.innerHTML='';
+      }
+    };
   }
   function importMaster(file){
     if(!file) return;
@@ -545,9 +666,7 @@ window.SLF = window.SLF || {};
       try{
         const wb=XLSX.read(e.target.result,{type:'array'});
         if(wb.SheetNames.includes('Items')){
-          Promise.resolve(importMasterWorkbook(wb)).catch(()=>{
-            const current=rootEl.querySelector('#scImportStatus');if(current)current.textContent='นำเข้าไม่สำเร็จ กรุณาตรวจสอบ Template และสิทธิ์ Admin';
-          });
+          showMasterImportPreview(prepareMasterWorkbook(wb));
           return;
         }
         const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,defval:''});
@@ -560,6 +679,7 @@ window.SLF = window.SLF || {};
           unit:findCol(headers,['หน่วยบรรจุ','หน่วย','unit']),
           size:findCol(headers,['ขนาดบรรจุ','packsize','conversion']),
           barcode:findCol(headers,['barcode','บาร์โค้ด']),
+          price:findCol(headers,['unitprice','unit_price','ราคาต่อหน่วย','ราคา']),
           lot:findCol(headers,['lot','ล็อต']),
           exp:findCol(headers,['exp','วันหมดอายุ','expire'])
         };
@@ -568,20 +688,22 @@ window.SLF = window.SLF || {};
         rows.slice(headerIndex+1).forEach(r=>{
           const code=String(r[cols.code]||'').trim(), name=String(r[cols.name]||'').trim();
           if(!code||!name)return;
-          if(!grouped.has(code)) grouped.set(code,{code,name,location:cols.location>=0?String(r[cols.location]||'ยังไม่ระบุตำแหน่ง'):'ยังไม่ระบุตำแหน่ง',barcode:cols.barcode>=0?String(r[cols.barcode]||''):'',baseUnit:cols.unit>=0?String(r[cols.unit]||'หน่วย'):'หน่วย',packages:[],lots:[]});
+          if(!grouped.has(code)) grouped.set(code,{code,name,location:cols.location>=0?String(r[cols.location]||'ยังไม่ระบุตำแหน่ง'):'ยังไม่ระบุตำแหน่ง',barcode:cols.barcode>=0?String(r[cols.barcode]||''):'',baseUnit:cols.unit>=0?String(r[cols.unit]||'หน่วย'):'หน่วย',unitPrice:cols.price>=0?Math.max(0,Number(String(r[cols.price]||0).replace(/,/g,''))||0):0,packages:[],lots:[]});
           const item=grouped.get(code), size=Math.max(1,Number(r[cols.size])||1), unit=cols.unit>=0?String(r[cols.unit]||item.baseUnit):item.baseUnit;
           if(!item.packages.some(p=>p.size===size))item.packages.push({name:unit,size});
           const lot=cols.lot>=0?String(r[cols.lot]||'').trim():'';
           if(lot&&!item.lots.some(l=>l.lot===lot))item.lots.push({lot,exp:cols.exp>=0?excelDate(r[cols.exp]):''});
         });
-        state.items=[...grouped.values()];state.counts={};state.search='';saveState();renderShell();
+        const items=[...grouped.values()].map(item=>{if(!item.packages.some(pack=>Number(pack.size)===1))item.packages.push({name:item.baseUnit||'หน่วย',size:1});item.packages.sort((a,b)=>Number(b.size)-Number(a.size));return item;});
+        if(!items.length)throw new Error('ไม่พบข้อมูล Item ที่สมบูรณ์');
+        showMasterImportPreview({items,payload:null});
       }catch(err){
-        status.textContent='ไม่พบคอลัมน์รหัสยาและชื่อยา กรุณาตรวจหัวตาราง';
+        status.textContent=String(err?.message||'').includes('missing columns')?'ไม่พบคอลัมน์รหัสยาและชื่อยา กรุณาตรวจหัวตาราง':importErrorMessage(err);
       }
     };
     reader.readAsArrayBuffer(file);
   }
 
   SLF.pages = SLF.pages || {};
-  SLF.pages.stockCount = { render };
+  SLF.pages.stockCount = { render, prepareMasterWorkbook, chooseWorkspace:renderWorkspacePicker };
 })();
