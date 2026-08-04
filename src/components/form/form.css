@@ -1,24 +1,24 @@
 .btn{
   font-family:inherit;font-size:13.5px;font-weight:600;border-radius:10px;border:1px solid var(--border);
-  background:var(--paper);color:var(--ink);padding:10px 17px;min-height:42px;cursor:pointer;transition:.18s ease;
+  background:rgba(21,30,63,.88);color:var(--ink);padding:10px 17px;min-height:42px;cursor:pointer;transition:.18s ease;
   display:inline-flex;align-items:center;gap:6px;
 }
-.btn:hover{border-color:var(--teal);color:var(--teal-dark);transform:translateY(-1px);box-shadow:0 6px 16px rgba(12,45,39,.08);}
-.btn-primary{background:linear-gradient(135deg,var(--teal),var(--teal-dark));border-color:var(--teal);color:#fff;box-shadow:0 8px 18px rgba(8,127,106,.2);}
-.btn-primary:hover{background:linear-gradient(135deg,#0A927A,var(--teal-dark));border-color:var(--teal-dark);color:#fff;box-shadow:0 10px 24px rgba(8,127,106,.28);}
+.btn:hover{border-color:var(--teal);color:var(--teal);transform:translateY(-1px);box-shadow:0 8px 24px rgba(22,217,227,.1);}
+.btn-primary{background:linear-gradient(135deg,var(--teal),#598CFF 60%,var(--violet));border-color:rgba(255,255,255,.16);color:#061020;box-shadow:0 8px 24px rgba(22,217,227,.22);}
+.btn-primary:hover{background:linear-gradient(135deg,#6EFFF2,#78A4FF 60%,#A98BFF);border-color:var(--teal);color:#061020;box-shadow:0 10px 30px rgba(22,217,227,.3);}
 .btn-primary:disabled{background:#AFC1BB;border-color:#AFC1BB;cursor:not-allowed;}
-.btn-danger{color:var(--danger);background:rgba(255,255,255,.72);}
+.btn-danger{color:#FF91A5;background:rgba(255,93,122,.08);}
 .btn-danger:hover{border-color:var(--danger);}
 .btn-sm{padding:6px 10px;font-size:12.5px;}
 
 /* ---------- Upload zone ---------- */
 .dropzone{
-  border:2px dashed #B7CBC5;border-radius:14px;padding:54px 20px;text-align:center;cursor:pointer;
-  transition:.2s ease;background:linear-gradient(145deg,#F9FCFB,#F3F8F6);position:relative;overflow:hidden;
+  border:1px dashed rgba(22,217,227,.46);border-radius:18px;padding:56px 20px;text-align:center;cursor:pointer;
+  transition:.2s ease;background:linear-gradient(145deg,rgba(22,217,227,.055),rgba(140,92,255,.07));position:relative;overflow:hidden;
 }
 .dropzone::before{content:"";position:absolute;width:180px;height:180px;border-radius:50%;background:rgba(8,127,106,.045);top:-100px;right:-40px;}
 .dropzone:hover,.dropzone.drag{border-color:var(--teal);background:var(--teal-tint);transform:translateY(-2px);box-shadow:inset 0 0 0 1px rgba(8,127,106,.08),0 12px 30px rgba(8,127,106,.08);}
-.dropzone .icon{font-size:36px;margin:0 auto 14px;display:grid;place-items:center;width:64px;height:64px;border-radius:18px;background:#fff;box-shadow:0 8px 24px rgba(12,45,39,.1);}
+.dropzone .icon{font-size:36px;margin:0 auto 14px;display:grid;place-items:center;width:68px;height:68px;border-radius:20px;background:linear-gradient(145deg,rgba(22,217,227,.2),rgba(140,92,255,.2));border:1px solid var(--border-bright);box-shadow:0 0 32px rgba(22,217,227,.14);}
 .dropzone h3{margin:0 0 7px;font-size:16px;font-weight:600;}
 .dropzone p{margin:0;color:var(--ink-soft);font-size:13px;}
 .file-chip{
@@ -32,7 +32,7 @@
 label.field-label{display:block;font-size:12.5px;font-weight:600;color:var(--ink-soft);margin-bottom:6px;}
 select,input[type=text],input[type=number]{
   width:100%;font-family:inherit;font-size:13.5px;padding:10px 12px;border-radius:10px;border:1px solid var(--border);
-  background:var(--paper);color:var(--ink);
+  background:var(--paper-solid);color:var(--ink);
 }
 select:focus,input:focus{outline:2px solid var(--teal);outline-offset:1px;border-color:var(--teal);}
 .field{margin-bottom:14px;}
@@ -42,7 +42,7 @@ select:focus,input:focus{outline:2px solid var(--teal);outline-offset:1px;border
   font-size:13px;transition:.15s ease;
 }
 .radio-card:hover{border-color:var(--teal);}
-.radio-card.sel{border-color:var(--teal);background:var(--teal-tint);}
+.radio-card.sel{border-color:var(--teal);background:linear-gradient(135deg,var(--teal-tint),var(--violet-tint));box-shadow:inset 3px 0 var(--teal);}
 .radio-card .t{font-weight:600;display:block;margin-bottom:2px;}
 .radio-card .d{color:var(--ink-soft);font-size:11.5px;}
 .toggle-row{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border);}

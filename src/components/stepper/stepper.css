@@ -1,8 +1,8 @@
 /* ---------- Stepper (signature element: apothecary bottle-cap strip) ---------- */
-.stepper{display:flex;flex-direction:column;align-items:stretch;margin:0;padding:16px;background:rgba(255,255,255,.94);border:1px solid rgba(217,228,225,.85);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;}
+.stepper{display:flex;flex-direction:column;align-items:stretch;margin:0;padding:14px;background:linear-gradient(165deg,color-mix(in srgb,var(--paper) 94%,transparent),color-mix(in srgb,var(--bg) 90%,transparent));border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;}
 .step{display:flex;flex-direction:row;align-items:center;gap:13px;min-height:68px;position:relative;padding:8px 10px;border-radius:12px;transition:.18s ease;}
 .step:hover{background:var(--teal-tint);}
-.step.active{background:var(--amber-tint);}
+.step.active{background:linear-gradient(90deg,var(--teal-tint),var(--violet-tint));}
 .step:not(:last-child)::after{
   content:"";position:absolute;top:48px;bottom:-20px;left:28px;width:3px;background:var(--border);border-radius:99px;
 }
@@ -15,9 +15,9 @@
 .cap::before{
   content:"";position:absolute;inset:-5px;border-radius:50%;border:2px dashed transparent;
 }
-.step.active .cap{border-color:var(--amber);color:#fff;background:var(--amber);box-shadow:0 0 0 5px var(--amber-tint),0 5px 14px rgba(224,138,36,.22);}
+.step.active .cap{border-color:var(--teal);color:#061020;background:linear-gradient(145deg,var(--teal),#7CF7E8);box-shadow:0 0 0 5px var(--teal-tint),0 0 22px rgba(22,217,227,.34);}
 .step.active .cap::before{border-color:var(--amber-tint);}
-.step.done .cap{border-color:var(--teal);background:var(--teal);color:#fff;}
+.step.done .cap{border-color:var(--amber);background:var(--amber);color:#071322;}
 .step-label{font-size:12.5px;text-align:left;color:var(--ink-soft);line-height:1.4;max-width:none;margin:0;}
-.step.active .step-label{color:var(--amber-dark);font-weight:600;}
-.step.done .step-label{color:var(--teal-dark);}
+.step.active .step-label{color:#E7FBFF;font-weight:600;}
+.step.done .step-label{color:var(--amber);}

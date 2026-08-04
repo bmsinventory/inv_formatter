@@ -1,0 +1,14 @@
+.dc-shell{display:grid;grid-template-columns:220px minmax(0,1fr);gap:18px;align-items:start}
+.dc-steps{position:sticky;top:20px;padding:14px;border:1px solid var(--border);border-radius:var(--radius);background:var(--paper);box-shadow:var(--shadow)}
+.dc-step{display:flex;gap:10px;align-items:center;padding:11px 9px;border-radius:11px;color:var(--ink-soft);font-size:12px}
+.dc-step b{display:grid;place-items:center;width:25px;height:25px;border-radius:50%;background:var(--bg);border:1px solid var(--border);flex:none}
+.dc-step.active{color:var(--ink);background:var(--teal-tint)}.dc-step.active b{color:var(--teal);border-color:var(--teal)}
+.dc-step.done b{background:var(--teal);color:#07101e;border-color:var(--teal)}
+.dc-work{min-width:0}.dc-work .panel{margin:0}.dc-actions{display:flex;justify-content:space-between;gap:10px;margin-top:22px;padding-top:16px;border-top:1px solid var(--border)}
+.dc-drop{display:grid;place-items:center;min-height:230px;padding:28px;border:2px dashed var(--border-bright);border-radius:18px;text-align:center;background:var(--teal-tint);cursor:pointer}.dc-drop:hover{border-color:var(--teal)}
+.dc-drop input{display:none}.dc-drop .icon{font-size:42px;margin-bottom:8px}.dc-note{padding:12px 14px;border-left:3px solid var(--teal);border-radius:8px;background:var(--teal-tint);font-size:12px;line-height:1.55;margin-bottom:18px}
+.dc-preview{max-height:340px;overflow:auto}.dc-preview td,.dc-preview th{white-space:nowrap}.dc-map-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.dc-map-item{display:grid;gap:6px}.dc-map-item label{font-size:12px;color:var(--ink-soft)}
+.dc-group{border:1px solid var(--border);border-radius:14px;margin:12px 0;overflow:hidden}.dc-group-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 14px;background:var(--teal-tint)}.dc-group-body{overflow:auto}.dc-group table{margin:0}.dc-reasons{font-size:11px;color:var(--ink-soft);line-height:1.5}.dc-review{margin-left:auto;display:flex;gap:6px}.dc-review button.active{border-color:var(--teal);color:var(--teal);background:var(--teal-tint)}
+.dc-empty{padding:45px 20px;text-align:center;color:var(--ink-soft)}
+@media(max-width:800px){.dc-shell{grid-template-columns:1fr}.dc-steps{position:static;display:flex;overflow:auto}.dc-step{flex:0 0 auto}.dc-map-grid{grid-template-columns:1fr}}
+@media(max-width:520px){.dc-step span{display:none}.dc-step{padding:7px}.dc-review{width:100%;margin-left:0}.dc-review button{flex:1}}

@@ -1,20 +1,50 @@
 :root{
-  --bg:#F4F7F6;
-  --paper:#FFFFFF;
-  --ink:#122925;
-  --ink-soft:#60736E;
-  --teal:#087F6A;
-  --teal-dark:#075B4D;
-  --teal-tint:#E7F6F2;
-  --amber:#E08A24;
-  --amber-dark:#A95A0D;
-  --amber-tint:#FFF1DC;
-  --border:#D9E4E1;
-  --danger:#B3432B;
-  --danger-tint:#F5DED6;
-  --warn:#C99A2B;
-  --warn-tint:#F7EBCB;
-  --radius:16px;
-  --shadow:0 1px 2px rgba(12,45,39,.04),0 12px 36px rgba(12,45,39,.08);
-  --shadow-hover:0 16px 44px rgba(12,45,39,.12);
+  --bg:#070B1B;
+  --bg-elevated:#0D1430;
+  --paper:#111936;
+  --paper-solid:#151E3F;
+  --ink:#F5F7FF;
+  --ink-soft:#98A4C7;
+  --teal:#16D9E3;
+  --teal-dark:#07A7C4;
+  --teal-tint:rgba(22,217,227,.12);
+  --amber:#9DFF57;
+  --amber-dark:#68D92F;
+  --amber-tint:rgba(157,255,87,.13);
+  --violet:#8C5CFF;
+  --violet-tint:rgba(140,92,255,.14);
+  --border:rgba(151,173,235,.16);
+  --border-bright:rgba(22,217,227,.34);
+  --danger:#FF5D7A;
+  --danger-tint:rgba(255,93,122,.14);
+  --warn:#FFBE3D;
+  --warn-tint:rgba(255,190,61,.14);
+  --radius:20px;
+  --shadow:0 18px 60px rgba(0,0,0,.28),inset 0 1px rgba(255,255,255,.025);
+  --shadow-hover:0 20px 64px rgba(0,0,0,.38),0 0 36px rgba(22,217,227,.08);
+}
+
+:root[data-theme="ocean"]{
+  --bg:#041821;--bg-elevated:#082C36;--paper:#0B3540;--paper-solid:#10434E;
+  --ink:#EEFFFD;--ink-soft:#98C7C4;--teal:#35F2C5;--teal-dark:#18B997;
+  --teal-tint:rgba(53,242,197,.13);--amber:#FFE66D;--amber-dark:#D8B936;
+  --amber-tint:rgba(255,230,109,.14);--violet:#37A7FF;--violet-tint:rgba(55,167,255,.14);
+  --border:rgba(112,232,215,.18);--border-bright:rgba(53,242,197,.4);
+}
+:root[data-theme="sunset"]{
+  --bg:#190C1B;--bg-elevated:#2A122B;--paper:#321633;--paper-solid:#402040;
+  --ink:#FFF6F2;--ink-soft:#D1A5B8;--teal:#FF8A5B;--teal-dark:#E45B43;
+  --teal-tint:rgba(255,138,91,.14);--amber:#FFD35A;--amber-dark:#E5AA26;
+  --amber-tint:rgba(255,211,90,.14);--violet:#F05DCE;--violet-tint:rgba(240,93,206,.15);
+  --border:rgba(255,157,184,.18);--border-bright:rgba(255,138,91,.42);
+}
+:root[data-theme="light"]{
+  --bg:#EDF3FA;--bg-elevated:#E2ECF7;--paper:#FFFFFF;--paper-solid:#F7FAFE;
+  --ink:#15203B;--ink-soft:#65708B;--teal:#087F9D;--teal-dark:#05647D;
+  --teal-tint:rgba(8,127,157,.1);--amber:#6DAF22;--amber-dark:#508718;
+  --amber-tint:rgba(109,175,34,.12);--violet:#6655D9;--violet-tint:rgba(102,85,217,.1);
+  --border:rgba(47,72,119,.16);--border-bright:rgba(8,127,157,.32);
+  --danger:#C53B58;--danger-tint:rgba(197,59,88,.1);--warn:#B97800;--warn-tint:rgba(185,120,0,.1);
+  --shadow:0 14px 42px rgba(31,52,88,.1),inset 0 1px rgba(255,255,255,.8);
+  --shadow-hover:0 18px 48px rgba(31,52,88,.15);
 }

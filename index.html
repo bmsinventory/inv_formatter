@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+try{document.documentElement.dataset.theme=localStorage.getItem('bms-theme')||'neon';}catch(e){}
+</script>
 <title>Stock Lot Formatter — จัดรูปแบบสต็อกตาม LOT</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -17,34 +20,85 @@
 <link rel="stylesheet" href="src/components/loading/loading.css">
 <link rel="stylesheet" href="src/components/table/table.css">
 <link rel="stylesheet" href="src/components/form/form.css">
+<link rel="stylesheet" href="src/modules/stock-count/stock-count.css">
+<link rel="stylesheet" href="src/modules/stock-count/stock-count-auth.css">
+<link rel="stylesheet" href="src/modules/duplicate-check/duplicate-check.css">
 <link rel="stylesheet" href="styles/responsive.css">
 </head>
 <body>
 <div id="app">
-  <div class="topbar">
-    <div class="brand">
-      <div class="brand-mark"></div>
-      <div>
-        <h1>Stock Lot Formatter</h1>
-        <p>จัดรูปแบบไฟล์สต็อกตามรายการสินค้าและ LOT — ห้องจ่ายยา</p>
+  <div class="app-shell">
+    <aside class="app-nav" aria-label="เมนูหลัก">
+      <div class="app-nav-brand">
+        <div class="brand-mark"></div>
+        <span class="app-nav-title">BMS Inventory</span>
       </div>
-    </div>
-    <button class="btn btn-danger" id="btnReset">เริ่มใหม่</button>
-  </div>
-
-  <div class="app-workspace">
-    <aside class="wizard-sidebar" aria-label="ขั้นตอนการทำงาน">
-      <div class="stepper" id="stepper"></div>
+      <nav class="app-nav-list">
+        <button class="app-nav-item active" data-module="lot-formatter" type="button">
+          <span class="app-nav-icon">📦</span>
+          <span class="app-nav-label">จัดสต็อกตาม LOT</span>
+        </button>
+        <button class="app-nav-item" data-module="stock-count" type="button">
+          <span class="app-nav-icon">🔢</span>
+          <span class="app-nav-label">นับสต็อก</span>
+          <span class="app-nav-badge">Mobile</span>
+        </button>
+        <button class="app-nav-item" data-module="duplicate-check" type="button">
+          <span class="app-nav-icon">🔎</span>
+          <span class="app-nav-label">ตรวจสอบรายการซ้ำ</span>
+          <span class="app-nav-badge">Review</span>
+        </button>
+      </nav>
     </aside>
-    <main class="wizard-main">
-      <div id="stepContent"></div>
-      <div class="footer-nav">
-        <button class="btn" id="btnBack">← ย้อนกลับ</button>
-        <div class="right">
-          <button class="btn btn-primary" id="btnNext">ถัดไป →</button>
+
+    <div class="app-main">
+      <div class="topbar">
+        <div class="brand">
+          <div>
+            <h1 id="moduleTitle">Stock Lot Formatter</h1>
+            <p id="moduleSubtitle">จัดรูปแบบไฟล์สต็อกตามรายการสินค้าและ LOT — ห้องจ่ายยา</p>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <label class="theme-picker" title="เปลี่ยนสีธีม">
+            <span class="theme-picker-icon" aria-hidden="true">◐</span>
+            <span class="theme-picker-label">ธีม</span>
+            <select id="themeSelect" aria-label="เปลี่ยนสีธีม">
+              <option value="neon">Neon</option>
+              <option value="ocean">Ocean</option>
+              <option value="sunset">Sunset</option>
+              <option value="light">Light</option>
+            </select>
+          </label>
         </div>
       </div>
-    </main>
+
+      <div class="module-panel" data-module-panel="lot-formatter">
+        <div class="app-workspace">
+          <aside class="wizard-sidebar" aria-label="ขั้นตอนการทำงาน">
+            <div class="stepper" id="stepper"></div>
+          </aside>
+          <main class="wizard-main">
+            <button class="btn btn-danger card-reset-btn" id="btnReset">เริ่มใหม่</button>
+            <div id="stepContent"></div>
+            <div class="footer-nav">
+              <button class="btn" id="btnBack">← ย้อนกลับ</button>
+              <div class="right">
+                <button class="btn btn-primary" id="btnNext">ถัดไป →</button>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+
+      <div class="module-panel" data-module-panel="stock-count" hidden>
+        <div id="stockCountRoot"></div>
+      </div>
+
+      <div class="module-panel" data-module-panel="duplicate-check" hidden>
+        <div id="duplicateCheckRoot"></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -53,10 +107,13 @@
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 
 <!-- config -->
 <script src="src/config/fields.config.js"></script>
-<script src="src/config/app.config.js"></script>9hv'dkขอเพิ่ม
+<script src="src/config/app.config.js"></script>
+<script src="src/config/supabase.config.js"></script>
 
 <!-- state -->
 <script src="src/state/store.js"></script>
@@ -70,6 +127,8 @@
 <!-- services -->
 <script src="src/services/excel-import.service.js"></script>
 <script src="src/services/excel-export.service.js"></script>
+<script src="src/services/stock-count-sync.service.js"></script>
+<script src="src/services/auth.service.js"></script>
 
 <!-- components -->
 <script src="src/components/toast/toast.js"></script>
@@ -90,8 +149,13 @@
 <script src="src/modules/preview/preview.page.js"></script>
 <script src="src/modules/export/export.page.js"></script>
 
+<!-- other top-level menus -->
+<script src="src/modules/stock-count/stock-count.page.js"></script>
+<script src="src/modules/duplicate-check/duplicate-check.page.js"></script>
+
 <!-- wizard router + boot -->
 <script src="src/wizard-router.js"></script>
 <script src="src/app.js"></script>
+<script src="src/app-shell.js"></script>
 </body>
 </html>
