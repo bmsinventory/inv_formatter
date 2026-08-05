@@ -27,7 +27,7 @@ window.SLF = window.SLF || {};
     const {data,error}=await c.auth.signInWithIdToken({provider:'google',token:credential});if(error)throw error;return data;
   }
   async function signOut(){const c=getClient();invalidate();superAdminCache=null;if(c)await c.auth.signOut();}
-  function onChange(callback){const c=getClient();return c?c.auth.onAuthStateChange((_event,value)=>callback(value)):null;}
+  function onChange(callback){const c=getClient();return c?c.auth.onAuthStateChange((event,value)=>callback(value,event)):null;}
   async function organizations(){
     return cached('organizations',async()=>{const c=getClient();const {data,error}=await c.from('organizations').select('id,name,code,departments(id,name,code)').eq('is_active',true).order('name');if(error)throw error;return data||[];},60000);
   }
@@ -36,7 +36,7 @@ window.SLF = window.SLF || {};
     const profile={id:user.id,email:user.email||'',full_name:user.user_metadata?.full_name||user.user_metadata?.name||user.email||'',avatar_url:user.user_metadata?.avatar_url||user.user_metadata?.picture||null,last_login_at:new Date().toISOString()};
     let result=await c.from('profiles').upsert(profile,{onConflict:'id'});if(result.error)throw result.error;
     result=await c.rpc('join_stock_department',{target_department_id:departmentId});if(result.error)throw result.error;
-    localStorage.setItem('bms-stock-workspace',JSON.stringify({organizationId,departmentId}));
+    saveWorkspace(user.id,{organizationId,departmentId});
     invalidate(`memberships:${user.id}`);
     return result.data||'user';
   }
@@ -55,31 +55,43 @@ window.SLF = window.SLF || {};
     const hasExplicitItems=departmentRows.some(row=>row.is_explicit);
     return items.filter(item=>!hasExplicitItems||departmentData.get(item.id)?.is_explicit).map(item=>{
       const link=departmentData.get(item.id),packages=(item.packages||[]).map(pack=>({systemId:pack.id,stockItemUnitId:pack.stock_item_unit_id||'',name:pack.name,size:Number(pack.size),barcode:pack.barcode||''}));
-      if(!packages.some(pack=>Number(pack.size)===1))packages.push({stockItemUnitId:'',name:item.base_unit||'หน่วย',size:1,barcode:''});
       packages.sort((a,b)=>Number(b.size)-Number(a.size));
       return {systemId:item.id,itemId:item.item_id,code:item.code,name:item.name,baseUnit:item.base_unit,unitPrice:Number(item.unit_price)||0,barcode:item.barcode||'',category:item.category||'',location:link?.location||'',packages,lots:[]};
     });},30000);
   }
   async function countResults(departmentId){
-    return cached(`counts:${departmentId}`,async()=>{const c=getClient();const {data,error}=await c.from('opening_stock_counts').select('status,note,counter_name,department_item:department_items!inner(department_id,item:items(item_id)),entries:opening_stock_entries(lot,exp,qty)').eq('department_item.department_id',departmentId);if(error)throw error;const counts={};(data||[]).forEach(row=>{const itemId=row.department_item?.item?.item_id;if(itemId)counts[itemId]={status:row.status,note:row.note||'',counterName:row.counter_name||'',lots:(row.entries||[]).map(entry=>({lot:entry.lot||'',exp:entry.exp||'',qty:entry.qty||{}}))};});return counts;},10000);
+    return cached(`counts:${departmentId}`,async()=>{const c=getClient();const {data,error}=await c.from('opening_stock_counts').select('status,note,counter_name,department_item:department_items!inner(department_id,item:items(item_id)),entries:opening_stock_entries(id,lot,exp,unit_qty,package_size,entry_group,recorded_by,recorded_by_name,recorded_at)').eq('department_item.department_id',departmentId);if(error)throw error;const counts={};(data||[]).forEach(row=>{const itemId=row.department_item?.item?.item_id;if(!itemId)return;const groups=new Map();(row.entries||[]).forEach(entry=>{const key=String(entry.entry_group),lot=groups.get(key)||{entryGroup:Number(entry.entry_group),lot:entry.lot||'',exp:entry.exp||'',qty:{},recordedBy:entry.recorded_by||'',recordedByName:entry.recorded_by_name||'',recordedAt:entry.recorded_at||'',editReason:''};lot.qty[entry.package_size]=(Number(lot.qty[entry.package_size])||0)+(Number(entry.unit_qty)||0);groups.set(key,lot);});counts[itemId]={status:row.status,note:row.note||'',counterName:row.counter_name||'',lots:[...groups.values()].sort((a,b)=>a.entryGroup-b.entryGroup)};});return counts;},10000);
   }
   async function saveCount(departmentId,itemId,status,lots,note,counterName,packages){
     const c=getClient();
-    let result=await c.from('department_items').select('id,item:items!inner(item_id)').eq('department_id',departmentId).eq('item.item_id',itemId).maybeSingle();if(result.error)throw result.error;
-    if(!result.data){
-      result=await c.rpc('ensure_department_item',{target_department_id:departmentId,target_source_item_id:itemId});if(result.error)throw result.error;
-      result={data:{id:result.data}};
-    }
-    result=await c.from('opening_stock_counts').upsert({department_item_id:result.data.id,status,note:note||'',counted_by:(await session()).user.id,counter_name:counterName||'',completed_at:status==='pending'?null:new Date().toISOString(),updated_at:new Date().toISOString()},{onConflict:'department_item_id'}).select('id').single();if(result.error)throw result.error;
-    const countId=result.data.id;let deletion=await c.from('opening_stock_entries').delete().eq('count_id',countId);if(deletion.error)throw deletion.error;
-    const entries=(lots||[]).map(lot=>({count_id:countId,lot:lot.lot||'',exp:lot.exp||'',qty:lot.qty||{},base_quantity:(packages||[]).reduce((sum,pack)=>sum+(Number(lot.qty&&lot.qty[pack.size])||0)*Number(pack.size||1),0)}));
-    if(entries.length){const insertion=await c.from('opening_stock_entries').insert(entries);if(insertion.error)throw insertion.error;}invalidate(`counts:${departmentId}`);invalidate('dashboard');
+    if(!(packages||[]).length)throw new Error('รายการนี้ยังไม่มีข้อมูลหน่วยบรรจุ');
+    if((packages||[]).some(pack=>!String(pack.stockItemUnitId||'').trim()))throw new Error('ทุกหน่วยบรรจุต้องมี stock_item_unit_id ก่อนบันทึกผลนับ');
+    const entries=(lots||[]).flatMap((lot,lotIndex)=>(packages||[]).map(pack=>{const unitQty=Math.max(0,Number(lot.qty&&lot.qty[pack.size])||0);return {stock_item_unit_id:pack.stockItemUnitId,unit_qty:unitQty,package_size:Number(pack.size)||1,entry_group:Number(lot.entryGroup)||lotIndex+1,lot:lot.lot||'',exp:lot.exp||'',edit_reason:lot.editReason||''};}).filter(entry=>entry.unit_qty!==0));
+    const {error}=await c.rpc('save_stock_count_locked',{target_department_id:departmentId,target_item_id:itemId,target_status:status,target_note:note||'',target_counter_name:counterName||'',entry_payload:entries});if(error)throw error;invalidate(`counts:${departmentId}`);invalidate('dashboard');
   }
-  function savedWorkspace(){try{return JSON.parse(localStorage.getItem('bms-stock-workspace'))||null;}catch(e){return null;}}
+  async function acquireCountLock(departmentId,itemId){const c=getClient();const {data,error}=await c.rpc('acquire_stock_item_lock',{target_department_id:departmentId,target_item_id:itemId});if(error)throw error;return Array.isArray(data)?data[0]:data;}
+  async function releaseCountLock(departmentId,itemId){const c=getClient();if(!c)return;const {error}=await c.rpc('release_stock_item_lock',{target_department_id:departmentId,target_item_id:itemId});if(error)throw error;}
+  async function touchStockPresence(departmentId,displayName){const c=getClient();const {error}=await c.rpc('touch_stock_presence',{target_department_id:departmentId,target_display_name:displayName||''});if(error)throw error;}
+  async function leaveStockPresence(departmentId){const c=getClient();if(!c)return;await c.rpc('leave_stock_presence',{target_department_id:departmentId});}
+  async function requestLotEdit(departmentId,itemId,entryGroup,reason,requesterName){const c=getClient();const {data,error}=await c.rpc('request_stock_lot_edit',{target_department_id:departmentId,target_item_id:itemId,target_entry_group:Number(entryGroup),target_reason:reason,target_requester_name:requesterName||''});if(error)throw error;return data;}
+  async function respondLotEditRequest(requestId,approved){const c=getClient();const {error}=await c.rpc('respond_stock_lot_edit_request',{target_request_id:requestId,target_approved:Boolean(approved)});if(error)throw error;}
+  async function pendingLotEditRequests(departmentId){const c=getClient();const {data,error}=await c.from('opening_stock_edit_requests').select('id,entry_group,requester_id,requester_name,owner_id,reason,status,created_at,count:opening_stock_counts(department_item:department_items(item:items(item_id,code,name)),entries:opening_stock_entries(entry_group,lot,exp))').eq('department_id',departmentId).eq('status','pending').order('created_at');if(error)throw error;return data||[];}
+  async function lotAdjustmentHistory(departmentId,itemId,entryGroup){const c=getClient();const {data,error}=await c.from('opening_stock_adjustments').select('id,entry_group,lot,exp,stock_item_unit_id,previous_qty,new_qty,adjusted_qty,changed_by_name,change_reason,changed_at,count:opening_stock_counts!inner(department_item:department_items!inner(department_id,item:items!inner(item_id)))').eq('count.department_item.department_id',departmentId).eq('count.department_item.item.item_id',itemId).eq('entry_group',Number(entryGroup)).order('changed_at',{ascending:false});if(error)throw error;return data||[];}
+  function subscribeLotEditRequests(departmentId,callback){const c=getClient();if(!c)return()=>{};const channel=c.channel(`stock-edit-requests-${departmentId}`).on('postgres_changes',{event:'*',schema:'public',table:'opening_stock_edit_requests',filter:`department_id=eq.${departmentId}`},callback).subscribe();return()=>c.removeChannel(channel);}
+  function workspaceStorageKey(userId){return userId?`bms-stock-workspace:${userId}`:'';}
+  function saveWorkspace(userId,workspace){
+    const key=workspaceStorageKey(userId);if(!key)return;
+    try{localStorage.setItem(key,JSON.stringify(workspace));}catch(e){}
+  }
+  function savedWorkspace(userId){
+    const key=workspaceStorageKey(userId);if(!key)return null;
+    try{return JSON.parse(localStorage.getItem(key))||null;}catch(e){return null;}
+  }
   async function bootstrapWorkspace(organization,department){
     const c=getClient();const {data,error}=await c.rpc('bootstrap_stock_workspace',{org_code:organization.code,org_name:organization.name,dept_code:department.code,dept_name:department.name});
     if(error)throw error;const created=Array.isArray(data)?data[0]:data;
-    if(created)localStorage.setItem('bms-stock-workspace',JSON.stringify({organizationId:created.organization_id,departmentId:created.department_id}));
+    const current=await session();
+    if(created&&current?.user?.id)saveWorkspace(current.user.id,{organizationId:created.organization_id,departmentId:created.department_id});
     return created;
   }
   async function clearOrganizationData(organizationId){
@@ -87,12 +99,12 @@ window.SLF = window.SLF || {};
     if(error)throw error;superAdminCache=null;invalidate();return Number(data)||0;
   }
   async function superAdminStatus(){
-    const current=await session(),userId=current?.user?.id||'';return cached(`super-status:${userId}`,async()=>{const c=getClient();const {data,error}=await c.from('platform_admins').select('user_id').maybeSingle();if(error){if(error.code==='42P01'||error.code==='PGRST205')return false;throw error;}return Boolean(data);},60000);
+    const current=await session(),userId=current?.user?.id||'';return cached(`super-status:${userId}`,async()=>{const c=getClient();const {data,error}=await c.from('platform_admins').select('user_id').eq('user_id',userId).maybeSingle();if(error){if(error.code==='42P01'||error.code==='PGRST205')return false;throw error;}return Boolean(data);},60000);
   }
   function subscribeDepartment(departmentId,callback){
     const c=getClient();if(!c)return()=>{};let timer;
     const notify=()=>{invalidate(`counts:${departmentId}`);invalidate(`items:${departmentId}`);clearTimeout(timer);timer=setTimeout(callback,350);};
-    const channel=c.channel(`stock-department-${departmentId}`).on('postgres_changes',{event:'*',schema:'public',table:'opening_stock_counts'},notify).on('postgres_changes',{event:'*',schema:'public',table:'opening_stock_entries'},notify).on('postgres_changes',{event:'*',schema:'public',table:'department_items',filter:`department_id=eq.${departmentId}`},notify).on('postgres_changes',{event:'*',schema:'public',table:'items'},notify).on('postgres_changes',{event:'*',schema:'public',table:'item_packages'},notify).subscribe();
+    const channel=c.channel(`stock-department-${departmentId}`).on('postgres_changes',{event:'*',schema:'public',table:'opening_stock_counts'},notify).on('postgres_changes',{event:'*',schema:'public',table:'opening_stock_entries'},notify).on('postgres_changes',{event:'*',schema:'public',table:'items'},notify).on('postgres_changes',{event:'*',schema:'public',table:'item_packages'},notify).subscribe();
     return()=>{clearTimeout(timer);c.removeChannel(channel);};
   }
   function subscribeMasterData(callback){
@@ -131,6 +143,10 @@ window.SLF = window.SLF || {};
   }
   const adminTables={organizations:'organizations',departments:'departments',items:'items',packages:'item_packages',users:'member_access_rules'};
   async function superAdminSave(entity,id,values){
+    if(entity==='users'&&values.role==='super_admin'){
+      const c=getClient(),result=await c.rpc('add_super_admin_by_email',{target_email:values.email});
+      if(result.error)throw result.error;superAdminCache=null;invalidate();return {user_id:result.data};
+    }
     const table=adminTables[entity];if(!table)throw new Error('Unsupported master-data entity');
     const c=getClient(),query=id?c.from(table).update(values).eq('id',id):c.from(table).insert(values);
     const {data,error}=await query.select().single();if(error)throw error;superAdminCache=null;invalidate();return data;
@@ -141,8 +157,10 @@ window.SLF = window.SLF || {};
     superAdminCache=null;invalidate();
   }
 
-  async function importMasterData(organizationId,departmentId,payload){
+  async function importMasterData(organizationId,departmentId,payload,onProgress){
     const c=getClient();
+    const progress=(percent,label)=>{if(typeof onProgress==='function')onProgress({percent:Math.max(0,Math.min(100,Math.round(percent))),label});};
+    progress(2,'กำลังตรวจสอบข้อมูลเดิม');
     const itemPayload=payload.items.map(item=>({organization_id:organizationId,item_id:item.itemId,code:item.code,name:item.name,base_unit:item.baseUnit,unit_price:Number(item.unitPrice)||0,barcode:item.barcode||null,category:item.category||null,is_active:true}));
     let result=await c.from('items').select('id,item_id,code,name').eq('organization_id',organizationId);if(result.error)throw result.error;
     const existingByItemId=new Map((result.data||[]).map(item=>[String(item.item_id),item]));
@@ -150,7 +168,8 @@ window.SLF = window.SLF || {};
     const incomingCodeNameCounts=new Map();
     itemPayload.forEach(item=>{const key=`${String(item.code)}\u0000${String(item.name)}`;incomingCodeNameCounts.set(key,(incomingCodeNameCounts.get(key)||0)+1);});
     const ids=new Map();
-    for(const item of itemPayload){
+    for(let itemIndex=0;itemIndex<itemPayload.length;itemIndex++){
+      const item=itemPayload[itemIndex];
       const byItemId=existingByItemId.get(String(item.item_id));
       const codeNameKey=`${String(item.code)}\u0000${String(item.name)}`;
       const byCodeName=incomingCodeNameCounts.get(codeNameKey)===1?existingByCodeName.get(codeNameKey):null;
@@ -163,12 +182,15 @@ window.SLF = window.SLF || {};
       ids.set(String(result.data.item_id),result.data.id);
       existingByItemId.set(String(result.data.item_id),result.data);
       existingByCodeName.set(`${String(result.data.code)}\u0000${String(result.data.name||'')}`,result.data);
+      progress(5+((itemIndex+1)/Math.max(itemPayload.length,1))*65,`กำลังนำเข้า Items ${itemIndex+1}/${itemPayload.length}`);
     }
     const packages=payload.items.flatMap(item=>item.packages.map(pack=>({item_id:ids.get(String(item.itemId)),stock_item_unit_id:pack.stockItemUnitId||null,name:pack.name,size:Number(pack.size)||1,barcode:pack.barcode||null}))).filter(row=>row.item_id);
-    if(packages.length){result=await c.from('item_packages').upsert(packages,{onConflict:'item_id,name,size'});if(result.error)throw result.error;}
+    if(packages.length){result=await c.from('item_packages').upsert(packages,{onConflict:'item_id,stock_item_unit_id'});if(result.error)throw result.error;}
+    progress(78,`นำเข้า Packages แล้ว ${packages.length} รายการ`);
     result=await c.from('department_items').update({is_explicit:false}).eq('department_id',departmentId);if(result.error)throw result.error;
     const departmentItems=payload.items.filter(item=>item.departmentLinked).map(item=>({department_id:departmentId,item_id:ids.get(String(item.itemId)),location:item.location||null,status:'pending',is_explicit:true})).filter(row=>row.item_id);
     if(departmentItems.length){result=await c.from('department_items').upsert(departmentItems,{onConflict:'department_id,item_id'});if(result.error)throw result.error;}
+    progress(88,`ผูกหน่วยงานแล้ว ${departmentItems.length} รายการ`);
     result=await c.from('departments').select('id,code').eq('organization_id',organizationId);if(result.error)throw result.error;
     const departmentIds=new Map((result.data||[]).map(row=>[String(row.code).trim().toUpperCase(),row.id]));
     const userRuleMap=new Map();
@@ -182,8 +204,9 @@ window.SLF = window.SLF || {};
     });
     const userRules=[...userRuleMap.values()];
     if(userRules.length){result=await c.from('member_access_rules').upsert(userRules,{onConflict:'department_id,email'});if(result.error)throw result.error;}
+    progress(100,'นำเข้าข้อมูลสำเร็จ');
     superAdminCache=null;invalidate();return {items:itemPayload.length,packages:packages.length,users:userRules.length};
   }
 
-  SLF.auth={getClient,session,googleOAuth,googleIdToken,signOut,onChange,organizations,joinDepartment,memberships,profile,departmentItems,countResults,saveCount,savedWorkspace,bootstrapWorkspace,clearOrganizationData,superAdminStatus,superAdminData,superAdminSave,superAdminDelete,importMasterData,subscribeDepartment,subscribeMasterData,dashboardData,subscribeDashboard,invalidateCache:invalidate};
+  SLF.auth={getClient,session,googleOAuth,googleIdToken,signOut,onChange,organizations,joinDepartment,memberships,profile,departmentItems,countResults,saveCount,acquireCountLock,releaseCountLock,touchStockPresence,leaveStockPresence,requestLotEdit,respondLotEditRequest,pendingLotEditRequests,lotAdjustmentHistory,subscribeLotEditRequests,savedWorkspace,bootstrapWorkspace,clearOrganizationData,superAdminStatus,superAdminData,superAdminSave,superAdminDelete,importMasterData,subscribeDepartment,subscribeMasterData,dashboardData,subscribeDashboard,invalidateCache:invalidate};
 })();

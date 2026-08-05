@@ -27,8 +27,8 @@ create table if not exists public.items (
 );
 create table if not exists public.item_packages (
   id uuid primary key default gen_random_uuid(), item_id uuid not null references public.items(id) on delete cascade,
-  stock_item_unit_id text, name text not null, size numeric not null check(size>0), barcode text, created_at timestamptz not null default now(),
-  unique(item_id,name,size)
+  stock_item_unit_id text not null check(btrim(stock_item_unit_id)<>''), name text not null, size numeric not null check(size>0), barcode text, created_at timestamptz not null default now(),
+  unique(item_id,name,size), unique(item_id,stock_item_unit_id), unique(item_id,size)
 );
 create table if not exists public.department_items (
   id uuid primary key default gen_random_uuid(), department_id uuid not null references public.departments(id) on delete cascade,
@@ -51,8 +51,12 @@ create table if not exists public.opening_stock_counts (
 );
 create table if not exists public.opening_stock_entries (
   id uuid primary key default gen_random_uuid(), count_id uuid not null references public.opening_stock_counts(id) on delete cascade,
-  lot text not null default '', exp text not null default '', qty jsonb not null default '{}'::jsonb,
-  base_quantity numeric not null default 0, created_at timestamptz not null default now()
+  entry_group integer not null check(entry_group>0), lot text not null default '', exp text not null default '',
+  stock_item_unit_id text not null, unit_qty numeric not null check(unit_qty>=0), package_size numeric not null check(package_size>0),
+  recorded_by uuid not null references auth.users(id), recorded_by_name text not null default '', recorded_at timestamptz not null default now(),
+  base_quantity numeric generated always as (unit_qty*package_size) stored,
+  unique(count_id,entry_group,stock_item_unit_id),
+  created_at timestamptz not null default now()
 );
 
 create or replace function public.is_organization_admin(target_org uuid) returns boolean language sql stable security definer set search_path=public as $$

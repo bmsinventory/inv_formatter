@@ -10,21 +10,24 @@ window.SLF = window.SLF || {};
   let authSession=null;
   let userProfile=null;
   let workspace=null;
-  let stopLiveSync=null;
+  let stopLiveSync=null,stopEditRequestSync=null;
+  let currentLock=null,lockTimer=null,presenceTimer=null,presenceDepartmentId=null,editRequestPollTimer=null;
+  const editRetryTimers=new Map();
+  window.addEventListener('pagehide',()=>{if(presenceDepartmentId)SLF.auth.leaveStockPresence(presenceDepartmentId).catch(()=>{});});
 
   function loadState(){
     try{
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
       if(saved && Array.isArray(saved.items)){
-        saved.role = saved.role || 'counter';
+        saved.role = 'counter';
         saved.session = saved.session || {area:'ทั้งหมด',counter:'',roundName:''};
-        const savedAreas=[...new Set(saved.items.map(i=>String(i.location||'').split('·')[0].trim()).filter(Boolean))];
-        if(saved.session.area!=='ทั้งหมด'&&!savedAreas.includes(saved.session.area)) saved.session.area='ทั้งหมด';
-        if(saved.role==='counter' && (saved.view==='setup'||!saved.session.startedAt)) saved.view='start';
+        saved.session.area='ทั้งหมด';
+        if(!saved.session.startedAt)saved.session.startedAt=new Date().toISOString();
+        if(!['count','progress'].includes(saved.view))saved.view='count';
         return saved;
       }
     }catch(e){}
-    return {role:'counter',view:'start',items:[],countIndex:0,counts:{},session:{area:'ทั้งหมด',counter:'',roundName:''},search:'',queueSearch:''};
+    return {role:'counter',view:'count',items:[],countIndex:0,counts:{},session:{area:'ทั้งหมด',counter:'',roundName:'',startedAt:new Date().toISOString()},search:'',queueSearch:''};
   }
   function saveState(){
     state.updatedAt=new Date().toISOString();
@@ -81,12 +84,8 @@ window.SLF = window.SLF || {};
   function statusLabel(status){
     return {done:'นับแล้ว',review:'ต้องตรวจสอบ',missing:'ไม่พบสินค้า',pending:'ยังไม่ได้นับ'}[status] || 'ยังไม่ได้นับ';
   }
-  function areas(){
-    return [...new Set(state.items.map(i=>i.location.split('·')[0].trim()).filter(Boolean))];
-  }
   function activeItems(){
-    const area=state.session.area;
-    return !area||area==='ทั้งหมด' ? state.items : state.items.filter(i=>i.location.split('·')[0].trim()===area);
+    return state.items;
   }
 
   function render(root){
@@ -100,22 +99,25 @@ window.SLF = window.SLF || {};
     try{
       authSession=await SLF.auth.session();
       if(!authSession){renderLogin();return;}
-      const saved=SLF.auth.savedWorkspace();
+      const saved=SLF.auth.savedWorkspace(authSession.user.id);
       const [profile,memberships,isSuperAdmin]=await Promise.all([SLF.auth.profile(authSession.user.id),SLF.auth.memberships(authSession.user.id),SLF.auth.superAdminStatus()]);userProfile=profile;
       const superAdminNav=document.querySelector('[data-module="super-admin"]');if(superAdminNav)superAdminNav.hidden=!isSuperAdmin;
       const selected=memberships.find(m=>m.department&&saved&&m.department.id===saved.departmentId);
       if(selected){await activateWorkspace(selected);return;}
-      if(memberships.length===1){await activateWorkspace(memberships[0]);return;}
+      if(SLF.appShell?.chooseWorkspace){await SLF.appShell.chooseWorkspace();return;}
       await renderWorkspacePicker();
     }catch(error){renderLogin('ยังเชื่อมต่อระบบผู้ใช้งานไม่ได้ กรุณาตรวจสอบการตั้งค่า Supabase และตารางฐานข้อมูล');}
   }
   async function activateWorkspace(membership){
     workspace={organization:membership.department.organization,department:membership.department,role:membership.role};
-    state.role=workspace.role==='admin'?'admin':'counter';
+    startPresence(workspace.department.id);
+    state.role='counter';
     state.session.counter=userProfile?.full_name||authSession.user.email||'';
+    state.session.area='ทั้งหมด';state.session.startedAt=state.session.startedAt||new Date().toISOString();state.view='count';
     renderShell();
     const [items,counts]=await Promise.all([SLF.auth.departmentItems(workspace.department.id).catch(()=>state.items||[]),SLF.auth.countResults(workspace.department.id).catch(()=>state.counts||{})]);state.items=items;state.counts=counts;
     if(stopLiveSync)stopLiveSync();stopLiveSync=SLF.auth.subscribeDepartment(workspace.department.id,async()=>{const [freshItems,freshCounts]=await Promise.all([SLF.auth.departmentItems(workspace.department.id),SLF.auth.countResults(workspace.department.id)]);state.items=freshItems;state.counts=freshCounts;saveState();renderShell();});
+    if(stopEditRequestSync)stopEditRequestSync();stopEditRequestSync=SLF.auth.subscribeLotEditRequests(workspace.department.id,handleEditRequestEvent);checkPendingEditRequests();
     if(SLF.appShell?.refreshAccount)SLF.appShell.refreshAccount();
     saveState();renderShell();
   }
@@ -158,10 +160,11 @@ window.SLF = window.SLF || {};
           userProfile=await SLF.auth.profile(user.id);
           const selected=choices.find(c=>c.department.id===button.dataset.dept);
           workspace={organization:selected.org,department:selected.department,role:joinedRole};
-          state.role=joinedRole==='admin'?'admin':'counter';state.session.counter=userProfile?.full_name||user.email||'';
+          startPresence(workspace.department.id);
+          state.role='counter';state.session.counter=userProfile?.full_name||user.email||'';state.session.area='ทั้งหมด';state.session.startedAt=state.session.startedAt||new Date().toISOString();state.view='count';
           if(SLF.appShell?.refreshAccount)SLF.appShell.refreshAccount();
           renderShell();
-        }catch(error){button.disabled=false;alert('ไม่สามารถเข้าร่วมหน่วยงานได้ กรุณาตรวจสอบฐานข้อมูล');}
+        }catch(error){button.disabled=false;SLF.components.alertModal('เข้าร่วมหน่วยงานไม่สำเร็จ','กรุณาตรวจสอบการเชื่อมต่อและสิทธิ์ฐานข้อมูล','error');}
       });
       const bootstrapTemplate=rootEl.querySelector('#scBootstrapTemplate');if(bootstrapTemplate)bootstrapTemplate.onclick=downloadMasterTemplate;
       const bootstrapFile=rootEl.querySelector('#scBootstrapFile');if(bootstrapFile)bootstrapFile.onchange=e=>bootstrapWorkspaceFromFile(e.target.files[0]);
@@ -202,123 +205,43 @@ window.SLF = window.SLF || {};
   }
 
   function renderShell(){
+    document.body.classList.remove('sc-queue-open');
+    if(!['count','progress'].includes(state.view))state.view='count';
     const scopedItems=activeItems();
     const done = scopedItems.filter(i=>countFor(i).status==='done').length;
     const reviewed = scopedItems.filter(i=>countFor(i).status==='review').length;
     const missing = scopedItems.filter(i=>countFor(i).status==='missing').length;
     const progress = scopedItems.length ? Math.round(((done+reviewed+missing)/scopedItems.length)*100) : 0;
-    const isAdmin = workspace?.role==='admin'&&state.role==='admin';
     rootEl.innerHTML = `
-      <section class="sc-shell sc-view-${isAdmin?'setup':state.view}">
+      <section class="sc-shell sc-view-${state.view}">
+        <div class="sc-mobile-bar">
+          <button type="button" class="sc-mobile-icon" data-mobile-menu aria-label="เปิดเมนูหลัก">☰</button>
+          <button type="button" class="sc-mobile-current" data-mobile-progress><strong>${state.view==='progress'?'ความคืบหน้า':'ตรวจนับสต็อก'}</strong><small>${done+reviewed+missing}/${scopedItems.length} รายการ</small></button>
+          ${state.view==='count'?'<button type="button" class="sc-mobile-icon" data-mobile-queue aria-label="ค้นหารายการยา">⌕</button>':'<button type="button" class="sc-mobile-icon" data-mobile-count aria-label="กลับหน้าตรวจนับ">←</button>'}
+        </div>
         <header class="sc-hero">
           <div>
-            <span class="sc-eyebrow">${isAdmin?'MASTER DATA ADMIN':'MOBILE STOCK COUNT'}</span>
-            <h2>${isAdmin?'จัดการข้อมูลตั้งต้น':'เดินนับยาได้ทันที ไม่ต้องใช้กระดาษ'}</h2>
-            <p>${isAdmin?'สำหรับผู้ดูแลข้อมูล: นำเข้าและตรวจรายการยาก่อนเปิดรอบนับ':'สำหรับผู้ตรวจนับ: ค้นหายา บันทึก Package, LOT และ EXP จากหน้าชั้นยา'}</p>
-          </div>
-          <div class="sc-hero-actions">
-            ${workspace?.role==='admin'?`<button class="sc-role-switch" id="scRoleSwitch">${isAdmin?'← กลับหน้าผู้ตรวจนับ':'⚙ ข้อมูลตั้งต้น'}</button>`:''}
+            <span class="sc-eyebrow">MOBILE STOCK COUNT</span>
+            <h2>ตรวจนับสต็อกได้ทันที ไม่ต้องใช้กระดาษ</h2>
+            <p>ค้นหารายการ บันทึกจำนวนตามหน่วยบรรจุ LOT และ EXP จากหน้าชั้นวาง</p>
           </div>
         </header>
-        ${isAdmin ? `
-          <div class="sc-admin-notice"><span>⚙</span><div><strong>พื้นที่ผู้ดูแลข้อมูล</strong><small>ผู้ตรวจนับจะไม่เห็นเมนูนำเข้าและรายการ Master ในหน้าทำงาน</small></div></div>
-        ` : `
-          <nav class="sc-tabs sc-counter-tabs" aria-label="เมนูสำหรับผู้ตรวจนับ">
-            <button data-view="start" class="${state.view==='start'?'active':''}"><b>1</b><span>เลือกรอบและพื้นที่<small>${esc(state.session.area||'ยังไม่ได้เลือก')}</small></span></button>
-            <button data-view="count" class="${state.view==='count'?'active':''}"><b>2</b><span>ค้นหาและเดินนับ<small>${progress}% สำเร็จ</small></span></button>
-            <button data-view="progress" class="${state.view==='progress'?'active':''}"><b>3</b><span>ความคืบหน้า<small>${done} นับแล้ว</small></span></button>
-          </nav>
-        `}
-        <div class="sc-content">${isAdmin?setupView():state.view==='start'?startView():state.view==='progress'?progressView():countView()}</div>
+        <nav class="sc-tabs sc-counter-tabs" aria-label="เมนูตรวจนับ">
+          <button data-view="count" class="${state.view==='count'?'active':''}"><b>1</b><span>ตรวจนับสต็อก<small>${progress}% สำเร็จ</small></span></button>
+          <button data-view="progress" class="${state.view==='progress'?'active':''}"><b>2</b><span>ความคืบหน้า<small>${done} นับแล้ว</small></span></button>
+        </nav>
+        <div class="sc-content">${state.view==='progress'?progressView():countView()}</div>
       </section>`;
     bindCommon();
     updateSyncBadge();
-    if(isAdmin) bindSetup();
-    else if(state.view==='start') bindStart();
-    else if(state.view==='count') bindCount();
+    if(state.view==='count') bindCount();
     else if(state.view==='progress') bindProgress();
   }
 
-  function startView(){
-    const currentArea=state.session.area||'ทั้งหมด';
-    const areaOptions=['ทั้งหมด',...areas()].map(a=>`<option value="${esc(a)}" ${a===currentArea?'selected':''}>${esc(a)}</option>`).join('');
-    const active=activeItems(), completed=active.filter(i=>countFor(i).status!=='pending').length;
-    return `<div class="sc-start-layout">
-      <article class="sc-card sc-session-card">
-        <div class="sc-card-head"><span class="sc-icon">▶</span><div><h3>เริ่มรอบตรวจนับ</h3><p>เลือกพื้นที่ก่อนเดินไปที่ชั้นยา</p></div></div>
-        <div class="sc-session-form">
-          <label><span>ชื่อผู้ตรวจนับ</span><input id="scCounterName" value="${esc(userProfile?.full_name||state.session.counter||'')}" readonly></label>
-          <label><span>พื้นที่ที่จะนับ</span><select id="scAreaSelect">${areaOptions}</select></label>
-        </div>
-        <div class="sc-area-preview">
-          <div><strong>${active.length}</strong><span>รายการในพื้นที่</span></div>
-          <div><strong>${completed}</strong><span>นับแล้ว</span></div>
-          <div><strong>${Math.max(0,active.length-completed)}</strong><span>รอนับ</span></div>
-        </div>
-        <button class="btn btn-primary sc-session-start" id="scBeginSession">${state.session.startedAt?'นับต่อจากครั้งล่าสุด':'เริ่มเดินนับ'} →</button>
-      </article>
-      <article class="sc-card sc-flow-card">
-        <div class="sc-card-head"><span class="sc-icon alt">✓</span><div><h3>ขั้นตอนทำงาน</h3><p>ทำตามลำดับ ไม่ต้องกลับมาคีย์ซ้ำ</p></div></div>
-        <div class="sc-flow-steps">
-          <div><b>1</b><span><strong>เลือกพื้นที่</strong><small>เลือกตู้หรือโซนที่กำลังจะเดินนับ</small></span></div>
-          <div><b>2</b><span><strong>ค้นหารายการยา</strong><small>ค้นหาจากชื่อ รหัสรายการ Barcode หรือตำแหน่ง</small></span></div>
-          <div><b>3</b><span><strong>นับ Package และ LOT</strong><small>ระบบรวมเป็นหน่วยเล็กสุดให้ทันที</small></span></div>
-          <div><b>4</b><span><strong>ตรวจความคืบหน้า</strong><small>กลับมาแก้รายการที่ข้ามไว้ได้ตลอด</small></span></div>
-        </div>
-      </article>
-    </div>`;
-  }
-
-  function setupView(){
-    return `
-      <div class="sc-setup-grid">
-        <article class="sc-card sc-import-card">
-          <div class="sc-card-head"><span class="sc-icon">⇧</span><div><h3>นำเข้าข้อมูลตั้งต้น</h3><p>รองรับ Excel และ CSV ระบบจะตรวจจับคอลัมน์ให้อัตโนมัติ</p></div></div>
-          <label class="sc-upload" for="scMasterFile">
-            <input id="scMasterFile" type="file" accept=".xlsx,.xls,.csv">
-            <span class="sc-upload-icon">▣</span>
-            <strong>แตะเพื่อเลือกไฟล์ข้อมูลยา</strong>
-            <small>.xlsx · .xls · .csv</small>
-          </label>
-          <div class="sc-import-hint">
-            <strong>คอลัมน์ที่แนะนำ</strong>
-            <div class="sc-chips"><span>รหัสยา</span><span>ชื่อยา</span><span>ราคาต่อหน่วย</span><span>ตำแหน่ง</span><span>หน่วยบรรจุ</span><span>ขนาดบรรจุ</span><span>Barcode</span><span>LOT</span><span>EXP</span></div>
-          </div>
-          <div class="sc-import-actions">
-            <button class="btn" id="scDownloadMasterTemplate">ดาวน์โหลด Template ข้อมูลพื้นฐาน</button>
-            <button class="btn btn-danger" id="scClearOrganizationData">เคลียร์ข้อมูลโรงพยาบาลนี้</button>
-            <span id="scImportStatus">ข้อมูลจะถูกเก็บในอุปกรณ์นี้</span>
-          </div>
-        </article>
-        <article class="sc-card">
-          <div class="sc-card-head"><span class="sc-icon alt">✓</span><div><h3>ข้อมูลพร้อมใช้งาน</h3><p>ตรวจรายการก่อนเริ่มเดินนับ</p></div></div>
-          <div class="sc-master-summary">
-            <div><strong>${state.items.length}</strong><span>รายการยา</span></div>
-            <div><strong>${new Set(state.items.map(i=>i.location.split('·')[0].trim())).size}</strong><span>พื้นที่จัดเก็บ</span></div>
-            <div><strong>${state.items.reduce((n,i)=>n+i.packages.length,0)}</strong><span>รูปแบบบรรจุ</span></div>
-          </div>
-          <label class="sc-search"><span>⌕</span><input id="scMasterSearch" value="${esc(state.search)}" placeholder="ค้นหา item_code หรือ item_name"></label>
-          <div class="sc-master-list">${masterRows()}</div>
-            <button class="btn btn-primary sc-start-btn" id="scStartCount" ${state.items.length?'':'disabled'}>ตรวจเสร็จแล้ว กลับหน้าเดินนับ <span>→</span></button>
-        </article>
-      </div>`;
-  }
-
-  function masterRows(){
-    const q = state.search.toLowerCase().trim();
-    const rows = state.items.filter(i=>!q||`${i.code} ${i.name}`.toLowerCase().includes(q)).slice(0,30);
-    if(!rows.length) return '<div class="sc-empty">ไม่พบรายการที่ค้นหา</div>';
-    return rows.map(i=>`<div class="sc-master-row">
-      <div class="sc-drug-mark">${esc(i.code.slice(0,2))}</div>
-      <div><strong>${esc(i.name)}</strong><span>${esc(i.code)} · ${esc(i.location)}</span></div>
-      <div class="sc-package-count">${i.packages.length} Package</div>
-    </div>`).join('');
-  }
-
   function countView(){
-    if(!state.items.length) return '<div class="sc-card sc-empty">กรุณานำเข้าข้อมูลตั้งต้นก่อนเริ่มนับ</div>';
+    if(!state.items.length) return '<div class="sc-card sc-empty"><strong>ยังไม่มีรายการสำหรับตรวจนับ</strong><p>กรุณาติดต่อผู้ดูแลระบบเพื่อกำหนดรายการให้หน่วยงานนี้</p></div>';
     const active=activeItems();
-    if(!active.length) return '<div class="sc-card sc-empty">ไม่พบรายการยาในพื้นที่ที่เลือก กรุณากลับไปเลือกพื้นที่ใหม่</div>';
+    if(!active.length) return '<div class="sc-card sc-empty">ยังไม่มีรายการสำหรับตรวจนับในหน่วยงานนี้</div>';
     if(!active.includes(state.items[state.countIndex])) state.countIndex=state.items.indexOf(active[0]);
     const item = state.items[state.countIndex];
     const count = countFor(item);
@@ -326,13 +249,15 @@ window.SLF = window.SLF || {};
     const complete = active.filter(i=>countFor(i).status!=='pending').length;
     return `
       <div class="sc-count-layout">
-        <aside class="sc-queue sc-card">
-          <div class="sc-queue-head"><strong>${esc(state.session.area||'รายการทั้งหมด')}</strong><span>${complete}/${active.length}</span></div>
+        <button type="button" class="sc-queue-scrim" data-close-queue aria-label="ปิดรายการยา"></button>
+        <aside class="sc-queue sc-card" aria-label="ค้นหาและเลือกรายการยา">
+          <div class="sc-queue-head"><strong>${esc(state.session.area||'รายการทั้งหมด')}</strong><span>${complete}/${active.length}</span><button type="button" class="sc-queue-close" data-close-queue aria-label="ปิดรายการยา">×</button></div>
           <div class="sc-progress"><i style="width:${active.length?complete/active.length*100:0}%"></i></div>
-          <label class="sc-search compact"><span>⌕</span><input id="scQueueSearch" value="${esc(state.queueSearch||'')}" autocomplete="off" enterkeyhint="search" placeholder="ค้นหา item_code หรือ item_name"></label>
+          <label class="sc-search compact"><span aria-hidden="true">🔎</span><input id="scQueueSearch" value="${esc(state.queueSearch||'')}" autocomplete="off" enterkeyhint="search" aria-label="ค้นหารหัสยาหรือชื่อยา" placeholder="ค้นหารหัสยา หรือชื่อยา"></label>
           <div class="sc-queue-list">${queueRows()}</div>
         </aside>
         <article class="sc-count-card sc-card" data-code="${esc(item.code)}">
+          <div class="sc-count-lock" id="scCountLock"><span>⏳</span><strong>กำลังตรวจสอบผู้ใช้งาน...</strong></div>
           <div class="sc-item-top">
             <div class="sc-location"><span>⌖</span>${esc(item.location)}</div>
             <div class="sc-item-order">${active.indexOf(item)+1} / ${active.length}</div>
@@ -344,34 +269,93 @@ window.SLF = window.SLF || {};
           <div class="sc-lot-list">${lots.map((l,idx)=>lotCard(item,l,idx)).join('')}</div>
           <button class="sc-add-lot" id="scAddLot">＋ เพิ่ม LOT ที่พบ</button>
           <div class="sc-count-total"><div><span>รวมทั้งหมด</span><small id="scGrandValue">มูลค่า ${formatMoney(totalFromLots(item,lots)*(Number(item.unitPrice)||0))}</small></div><strong id="scGrandTotal">${totalFromLots(item,lots).toLocaleString()} <small>${esc(item.baseUnit)}</small></strong></div>
-          <label class="sc-note"><span>หมายเหตุ</span><input id="scCountNote" value="${esc(count.note)}" placeholder="เช่น พบยาวางผิดตำแหน่ง"></label>
+          <div class="sc-count-footer"><label class="sc-note"><span>หมายเหตุ (ถ้ามี)</span><input id="scCountNote" value="${esc(count.note)}" placeholder="พิมพ์หมายเหตุ"></label>
           <div class="sc-count-actions">
             <button class="btn sc-missing" id="scMissing"><span aria-hidden="true">∅</span> ไม่พบ</button>
             <button class="btn sc-review" id="scReview"><span aria-hidden="true">!</span> ตรวจภายหลัง</button>
             <button class="btn btn-primary" id="scSaveNext">บันทึกและถัดไป <span aria-hidden="true">→</span></button>
-          </div>
+          </div></div>
         </article>
       </div>`;
   }
 
   function lotCard(item,l,idx){
-    return `<section class="sc-lot-card" data-lot-index="${idx}">
-      <div class="sc-lot-head"><strong>LOT ${idx+1}</strong>${idx?`<button class="sc-remove-lot" data-remove-lot="${idx}" aria-label="ลบ LOT">×</button>`:'<span>กรอกข้อมูลจากฉลาก</span>'}</div>
-      <div class="sc-lot-fields">
-        <label><span>เลข LOT</span><input data-field="lot" value="${esc(l.lot)}" placeholder="กรอกเลข LOT"></label>
-        <label><span>วันหมดอายุ (EXP)</span><input data-field="exp" inputmode="numeric" value="${esc(l.exp)}" placeholder="DD/MM/YYYY หรือ MM/YYYY"></label>
-      </div>
-      <div class="sc-package-grid">${item.packages.map(p=>`
+    const protectedLot=Boolean(l.recordedBy&&l.recordedBy!==authSession?.user?.id);
+    const recordedTime=l.recordedAt?new Date(l.recordedAt).toLocaleString('th-TH',{dateStyle:'medium',timeStyle:'short'}):'';
+    const ownerAttrs=protectedLot?' data-owner-locked disabled':'';
+    return `<section class="sc-lot-card" data-lot-index="${idx}" data-entry-group="${Number(l.entryGroup)||idx+1}">
+      <div class="sc-lot-head"><strong>LOT ${idx+1}</strong><span class="sc-lot-subtotal">รวม <strong data-subtotal="${idx}">${lotTotal(item,l).toLocaleString()} ${esc(item.baseUnit)}</strong></span>${idx&&!protectedLot?`<button class="sc-remove-lot" data-remove-lot="${idx}" aria-label="ลบ LOT">×</button>`:''}</div>
+      ${l.recordedBy?`<div class="sc-lot-audit"><span>👤 <strong>${esc(l.recordedByName||'ผู้ใช้งาน')}</strong></span><span>🕒 ${esc(recordedTime)}</span><button type="button" data-view-lot-history>📋 ประวัติ</button>${protectedLot?'<button type="button" class="sc-request-edit" data-request-edit>✏️ ขอแก้ไข</button>':''}</div>`:''}
+      <div class="sc-lot-entry-row"><div class="sc-lot-fields">
+        <label><span>เลข LOT</span><input data-field="lot" value="${esc(l.lot)}" placeholder="กรอกเลข LOT"${ownerAttrs}></label>
+        <label><span>วันหมดอายุ (EXP)</span><input data-field="exp" inputmode="numeric" value="${esc(l.exp)}" placeholder="DD/MM/YYYY หรือ MM/YYYY"${ownerAttrs}></label>
+      </div><div class="sc-package-grid">${item.packages.map(p=>`
         <label class="sc-package">
           <span><strong>${esc(p.name)}</strong><small>× ${p.size.toLocaleString()} ${esc(item.baseUnit)}</small></span>
-          <span class="sc-qty-control"><button type="button" data-step="-1" data-size="${p.size}" aria-label="ลดจำนวน ${esc(p.name)}">−</button><input inputmode="numeric" pattern="[0-9]*" aria-label="จำนวน ${esc(p.name)}" data-qty="${p.size}" value="${Number(l.qty && l.qty[p.size])||''}" placeholder="0"><button type="button" data-step="1" data-size="${p.size}" aria-label="เพิ่มจำนวน ${esc(p.name)}">＋</button></span>
-        </label>`).join('')}</div>
-      <div class="sc-lot-subtotal">รวม LOT นี้ <strong data-subtotal="${idx}">${lotTotal(item,l).toLocaleString()} ${esc(item.baseUnit)}</strong></div>
+          <span class="sc-qty-control"><button type="button" data-step="-1" data-size="${p.size}" aria-label="ลดจำนวน ${esc(p.name)}"${ownerAttrs}>−</button><input inputmode="numeric" pattern="[0-9]*" aria-label="จำนวน ${esc(p.name)}" data-qty="${p.size}" value="${Number(l.qty && l.qty[p.size])||''}" placeholder="0"${ownerAttrs}><button type="button" data-step="1" data-size="${p.size}" aria-label="เพิ่มจำนวน ${esc(p.name)}"${ownerAttrs}>＋</button></span>
+        </label>`).join('')}</div></div>
+      ${protectedLot?`<div class="sc-edit-reason"><label hidden><span class="sc-edit-reason-title">เหตุผลการแก้ไข <b>*</b></span><span class="sc-edit-status" data-edit-status hidden></span><input data-edit-reason value="${esc(l.editReason||'')}" placeholder="ระบุเหตุผลที่ต้องการแก้ไข"><button type="button" class="btn btn-primary" data-submit-edit>ส่งคำขอ</button></label></div>`:''}
     </section>`;
   }
 
   function lotTotal(item,lot){
     return item.packages.reduce((sum,p)=>sum+(Number(lot.qty && lot.qty[p.size])||0)*p.size,0);
+  }
+
+  function unlockLotForEdit(card){
+    clearTimeout(editRetryTimers.get(card.dataset.entryGroup));editRetryTimers.delete(card.dataset.entryGroup);
+    card.dataset.editing='true';
+    card.querySelectorAll('[data-owner-locked]').forEach(el=>{el.disabled=false;});
+    card.classList.remove('is-edit-rejected','is-edit-pending');const status=card.querySelector('[data-edit-status]');if(status){status.hidden=false;status.className='sc-edit-status is-approved';status.textContent='✓ อนุมัติแล้ว';}
+    const submit=card.querySelector('[data-submit-edit]');if(submit){submit.disabled=true;submit.textContent='แก้ไขข้อมูลได้';}
+  }
+  async function submitLotEditRequest(card){
+    const reason=card.querySelector('[data-edit-reason]'),submit=card.querySelector('[data-submit-edit]'),item=state.items[state.countIndex];
+    if(!reason.value.trim()){await SLF.components.alertModal('กรุณาระบุเหตุผล','ต้องระบุเหตุผลที่ต้องการแก้ไข LOT นี้ก่อนส่งคำขอ','warning');reason.focus();return;}
+    card.classList.remove('is-edit-rejected');submit.disabled=true;submit.textContent='กำลังส่ง...';
+    try{
+      const result=await SLF.auth.requestLotEdit(workspace.department.id,item.itemId||item.code,card.dataset.entryGroup,reason.value.trim(),userProfile?.full_name||authSession?.user?.email||'');
+      if(result?.status==='approved'){unlockLotForEdit(card);await SLF.components.alertModal('แก้ไขได้แล้ว',result.requires_approval?'เจ้าของรายการอนุมัติแล้ว':'ผู้บันทึกเดิม Offline ระบบบันทึกเหตุผลไว้และปลดล็อกให้แก้ไขแล้ว','success');}
+      else{card.classList.add('is-edit-pending');const status=card.querySelector('[data-edit-status]');if(status){status.hidden=false;status.className='sc-edit-status is-pending';status.textContent='⏳ รออนุมัติ';}submit.textContent='ส่งคำขอแล้ว';scheduleEditApprovalCheck(card);await SLF.components.alertModal('ส่งคำขอเรียบร้อย','ระบบแจ้งผู้บันทึกเดิมให้ตรวจสอบแล้ว\nคุณสามารถปิดหน้าต่างนี้และทำรายการอื่นต่อได้','pending','เข้าใจแล้ว');}
+    }catch(error){submit.disabled=false;submit.textContent='ส่งคำขอแก้ไข';await SLF.components.alertModal('ส่งคำขอไม่สำเร็จ',error.message,'error');}
+  }
+  function scheduleEditApprovalCheck(card){
+    const key=card.dataset.entryGroup;clearTimeout(editRetryTimers.get(key));
+    editRetryTimers.set(key,setTimeout(async()=>{if(card.dataset.editing==='true'||!document.body.contains(card))return;const reason=card.querySelector('[data-edit-reason]')?.value.trim(),item=state.items[state.countIndex];if(!reason||!item)return;try{const result=await SLF.auth.requestLotEdit(workspace.department.id,item.itemId||item.code,key,reason,userProfile?.full_name||authSession?.user?.email||'');if(result?.status==='approved'){unlockLotForEdit(card);await SLF.components.alertModal('แก้ไขได้แล้ว','ผู้บันทึกเดิม Offline แล้ว ระบบเก็บเหตุผลและปลดล็อก LOT ให้อัตโนมัติ','success');}else scheduleEditApprovalCheck(card);}catch(error){scheduleEditApprovalCheck(card);}},15000));
+  }
+  function startPresence(departmentId){
+    clearInterval(presenceTimer);clearInterval(editRequestPollTimer);if(presenceDepartmentId&&presenceDepartmentId!==departmentId)SLF.auth.leaveStockPresence(presenceDepartmentId).catch(()=>{});presenceDepartmentId=departmentId;
+    const touch=async()=>{try{await SLF.auth.touchStockPresence(departmentId,userProfile?.full_name||authSession?.user?.email||'');}catch(error){console.warn('Stock presence heartbeat failed',error);}};
+    touch();presenceTimer=setInterval(touch,25000);editRequestPollTimer=setInterval(checkPendingEditRequests,5000);
+  }
+  async function handleEditRequestEvent(payload){
+    const row=payload?.new||payload?.old||{};
+    if(row.requester_id===authSession?.user?.id&&row.status==='approved'){
+      const card=rootEl?.querySelector(`.sc-lot-card[data-entry-group="${Number(row.entry_group)}"]`);if(card)unlockLotForEdit(card);
+      await SLF.components.alertModal('คำขอแก้ไขได้รับอนุมัติ','คุณสามารถแก้ไข LOT ที่ขอไว้ได้แล้ว','success');
+    }else if(row.requester_id===authSession?.user?.id&&row.status==='rejected'){
+      clearTimeout(editRetryTimers.get(String(row.entry_group)));editRetryTimers.delete(String(row.entry_group));
+      const card=rootEl?.querySelector(`.sc-lot-card[data-entry-group="${Number(row.entry_group)}"]`),submit=card?.querySelector('[data-submit-edit]');
+      if(card){card.dataset.editing='false';card.classList.remove('is-edit-pending');card.classList.add('is-edit-rejected');const status=card.querySelector('[data-edit-status]');if(status){status.hidden=false;status.className='sc-edit-status is-rejected';status.textContent='✕ ไม่อนุมัติ';}}
+      if(submit){submit.disabled=false;submit.textContent='ส่งใหม่';}
+      await SLF.components.alertModal('คำขอถูกปฏิเสธ','ผู้บันทึกเดิมไม่อนุมัติการแก้ไข LOT นี้','warning');
+    }else if(row.owner_id===authSession?.user?.id&&row.status==='pending')checkPendingEditRequests();
+  }
+  async function checkPendingEditRequests(){
+    try{const requests=await SLF.auth.pendingLotEditRequests(workspace.department.id),request=requests.find(r=>r.owner_id===authSession?.user?.id);if(request)showEditApprovalPopup(request);}catch(error){console.warn('Pending LOT edit request check failed',error);}
+  }
+  function showEditApprovalPopup(request){
+    const modal=document.getElementById('modalRoot');if(!modal||modal.querySelector(`[data-edit-request="${request.id}"]`))return;
+    if(modal.innerHTML.trim()){setTimeout(checkPendingEditRequests,1200);return;}
+    const item=request.count?.department_item?.item||{},entries=(request.count?.entries||[]).filter(entry=>Number(entry.entry_group)===Number(request.entry_group)),lot=entries.find(entry=>entry.lot||entry.exp)||{};
+    modal.innerHTML=`<div class="overlay"><div class="modal sc-edit-approval-modal" data-edit-request="${esc(request.id)}"><div class="sc-edit-approval-head"><div class="sc-edit-approval-icon">✏️</div><div><span class="sc-edit-approval-kicker">คำขอแก้ไข LOT</span><h3>${esc(request.requester_name||'ผู้ใช้งาน')}</h3><p class="sc-edit-approval-caption">ต้องการแก้ไขข้อมูลที่คุณเป็นผู้บันทึก</p></div></div><div class="sc-edit-approval-item"><span>${esc(item.item_id||item.code||'-')}</span><strong>${esc(item.name||'รายการสต๊อก')}</strong><div class="sc-edit-approval-lot"><span><small>LOT</small><b>${esc(lot.lot||'-')}</b></span><span><small>EXP</small><b>${esc(lot.exp||'-')}</b></span></div></div><div class="sc-edit-approval-reason"><span>เหตุผลที่ขอแก้ไข</span><strong>${esc(request.reason||'-')}</strong></div><div class="row"><button class="btn btn-danger" data-reject-edit>✕ ไม่อนุมัติ</button><button class="btn btn-primary" data-approve-edit>✅ อนุมัติให้แก้ไข</button></div></div></div>`;
+    const respond=async approved=>{const buttons=modal.querySelectorAll('button');buttons.forEach(b=>b.disabled=true);try{await SLF.auth.respondLotEditRequest(request.id,approved);modal.innerHTML='';checkPendingEditRequests();}catch(error){buttons.forEach(b=>b.disabled=false);await SLF.components.alertModal('ตอบคำขอไม่สำเร็จ',error.message,'error');}};
+    modal.querySelector('[data-approve-edit]').onclick=()=>respond(true);modal.querySelector('[data-reject-edit]').onclick=()=>respond(false);
+  }
+  async function showLotHistory(card){
+    const modal=document.getElementById('modalRoot'),item=state.items[state.countIndex];
+    modal.innerHTML='<div class="overlay"><div class="modal sc-edit-approval-modal"><div class="sc-edit-approval-icon">📋</div><h3>กำลังโหลดประวัติการแก้ไข...</h3></div></div>';
+    try{const rows=await SLF.auth.lotAdjustmentHistory(workspace.department.id,item.itemId||item.code,card.dataset.entryGroup);modal.innerHTML=`<div class="overlay"><div class="modal sc-lot-history-modal"><h3>📋 ประวัติการแก้ไข LOT</h3><p>${esc(item.code)} · ${esc(item.name)}</p><div class="sc-lot-history-list">${rows.length?rows.map(row=>`<article><div><strong>${esc(row.changed_by_name||'ผู้ใช้งาน')}</strong><time>${esc(new Date(row.changed_at).toLocaleString('th-TH',{dateStyle:'medium',timeStyle:'short'}))}</time></div><p>${esc(row.lot)} · EXP ${esc(row.exp)} · ${esc(row.stock_item_unit_id)}</p><div><span>${Number(row.previous_qty).toLocaleString()} → ${Number(row.new_qty).toLocaleString()}</span><b>${Number(row.adjusted_qty)>0?'+':''}${Number(row.adjusted_qty).toLocaleString()}</b></div><small>เหตุผล: ${esc(row.change_reason||'บันทึกครั้งแรก')}</small></article>`).join(''):'<div class="sc-empty">ยังไม่มีประวัติการแก้ไข</div>'}</div><div class="row"><button class="btn btn-primary" data-close-history>ปิด</button></div></div></div>`;modal.querySelector('[data-close-history]').onclick=()=>modal.innerHTML='';}catch(error){modal.innerHTML='';await SLF.components.alertModal('โหลดประวัติไม่สำเร็จ',error.message,'error');}
   }
   function totalFromLots(item,lots){ return lots.reduce((s,l)=>s+lotTotal(item,l),0); }
 
@@ -417,53 +401,27 @@ window.SLF = window.SLF || {};
   }
 
   function bindCommon(){
-    rootEl.querySelectorAll('.sc-tabs button').forEach(b=>b.onclick=()=>{
-      if(b.dataset.view==='count'&&!state.session.startedAt){state.view='start';}
-      else state.view=b.dataset.view;
+    const appNav=document.querySelector('.app-nav');
+    rootEl.querySelector('[data-mobile-menu]')?.addEventListener('click',event=>{event.stopPropagation();appNav?.classList.toggle('is-mobile-open');if(appNav?.classList.contains('is-mobile-open'))setTimeout(()=>document.addEventListener('click',outside=>{if(!appNav.contains(outside.target))appNav.classList.remove('is-mobile-open');},{once:true}),0);});
+    rootEl.querySelector('[data-mobile-progress]')?.addEventListener('click',async()=>{if(state.view==='count'&&currentLock?.acquired){const item=state.items[state.countIndex];await SLF.auth.releaseCountLock(workspace.department.id,item.itemId||item.code).catch(()=>{});currentLock=null;clearInterval(lockTimer);}state.view=state.view==='progress'?'count':'progress';saveState();renderShell();});
+    rootEl.querySelector('[data-mobile-count]')?.addEventListener('click',()=>{state.view='count';saveState();renderShell();});
+    appNav?.querySelectorAll('.app-nav-item').forEach(button=>button.addEventListener('click',()=>appNav.classList.remove('is-mobile-open'),{once:true}));
+    rootEl.querySelectorAll('.sc-tabs button').forEach(b=>b.onclick=async()=>{
+      if(state.view==='count'&&b.dataset.view!=='count'&&currentLock?.acquired){const item=state.items[state.countIndex];await SLF.auth.releaseCountLock(workspace.department.id,item.itemId||item.code).catch(()=>{});currentLock=null;clearInterval(lockTimer);}
+      state.view=b.dataset.view;
       saveState();renderShell();
     });
-    const roleSwitch=rootEl.querySelector('#scRoleSwitch');
-    if(roleSwitch)roleSwitch.onclick=()=>{
-      state.role=state.role==='admin'?'counter':'admin';
-      state.view=state.role==='admin'?'setup':'start';
-      saveState();renderShell();
-    };
-  }
-  function bindStart(){
-    const area=rootEl.querySelector('#scAreaSelect');
-    area.onchange=()=>{
-      state.session.counter=rootEl.querySelector('#scCounterName').value;
-      state.session.area=area.value;saveState();renderShell();
-    };
-    rootEl.querySelector('#scBeginSession').onclick=()=>{
-      state.session.counter=rootEl.querySelector('#scCounterName').value.trim()||'ผู้ตรวจนับ';
-      state.session.area=area.value;
-      state.session.startedAt=state.session.startedAt||new Date().toISOString();
-      const first=activeItems().find(i=>countFor(i).status==='pending')||activeItems()[0];
-      if(first) state.countIndex=state.items.indexOf(first);
-      state.view='count';saveState();renderShell();
-    };
-  }
-  function bindSetup(){
-    const search=rootEl.querySelector('#scMasterSearch');
-    search.oninput=()=>{state.search=search.value;rootEl.querySelector('.sc-master-list').innerHTML=masterRows();};
-    rootEl.querySelector('#scDownloadMasterTemplate').onclick=downloadMasterTemplate;
-    rootEl.querySelector('#scClearOrganizationData').onclick=()=>{
-      const organizationName=workspace.organization.name;
-      SLF.components.confirmModal('เคลียร์ข้อมูลโรงพยาบาล',`ต้องการลบ Items, Packages, รายการผูกหน่วยงาน, ผลนับ และ LOT ทั้งหมดของ <strong>${esc(organizationName)}</strong> ใช่หรือไม่? โรงพยาบาล หน่วยงาน และผู้ใช้งานจะยังอยู่`,async()=>{
-        const status=rootEl.querySelector('#scImportStatus');if(status)status.textContent='กำลังเคลียร์ข้อมูล...';
-        try{const deleted=await SLF.auth.clearOrganizationData(workspace.organization.id);state.items=[];state.counts={};state.search='';saveState();renderShell();const current=rootEl.querySelector('#scImportStatus');if(current)current.textContent=`เคลียร์ข้อมูล ${deleted} รายการเรียบร้อยแล้ว`;}
-        catch(error){const current=rootEl.querySelector('#scImportStatus');if(current)current.textContent=`เคลียร์ข้อมูลไม่สำเร็จ — ${String(error?.message||error)}`;}
-      },'ยืนยันเคลียร์ข้อมูล');
-    };
-    rootEl.querySelector('#scStartCount').onclick=()=>{state.role='counter';state.view='start';state.countIndex=0;saveState();renderShell();};
-    rootEl.querySelector('#scMasterFile').onchange=e=>importMaster(e.target.files[0]);
   }
   function bindCount(){
     if(!rootEl.querySelector('.sc-count-card')) return;
-    const bindQueueRows=()=>rootEl.querySelectorAll('.sc-queue-row').forEach(b=>b.onclick=()=>{
+    acquireCurrentLock();
+    const queue=rootEl.querySelector('.sc-queue'),openQueue=()=>{queue?.classList.add('is-open');document.body.classList.add('sc-queue-open');setTimeout(()=>rootEl.querySelector('#scQueueSearch')?.focus(),80);},closeQueue=()=>{queue?.classList.remove('is-open');document.body.classList.remove('sc-queue-open');};
+    rootEl.querySelector('[data-mobile-queue]')?.addEventListener('click',openQueue);
+    rootEl.querySelectorAll('[data-close-queue]').forEach(button=>button.addEventListener('click',closeQueue));
+    const bindQueueRows=()=>rootEl.querySelectorAll('.sc-queue-row').forEach(b=>b.onclick=async()=>{
         const current=state.items[state.countIndex];
-        saveCurrent(countFor(current).status);
+        putDraft(readCurrentLots());
+        if(currentLock?.acquired)await SLF.auth.releaseCountLock(workspace.department.id,current.itemId||current.code).catch(()=>{});
         state.countIndex=Number(b.dataset.index);
         state.queueSearch='';
         saveState();renderShell();
@@ -486,11 +444,32 @@ window.SLF = window.SLF || {};
       updateTotals();
     });
     rootEl.querySelectorAll('[data-qty]').forEach(i=>i.oninput=updateTotals);
-    rootEl.querySelector('#scAddLot').onclick=()=>{const draft=readCurrentLots();draft.push({lot:'',exp:'',qty:{}});putDraft(draft);renderShell();};
+    rootEl.querySelectorAll('[data-request-edit]').forEach(button=>button.onclick=()=>{
+      const card=button.closest('.sc-lot-card'),label=card.querySelector('.sc-edit-reason label'),reason=card.querySelector('[data-edit-reason]');
+      button.hidden=true;label.hidden=false;reason.focus();
+      card.querySelector('[data-submit-edit]').onclick=()=>submitLotEditRequest(card);
+    });
+    rootEl.querySelectorAll('[data-view-lot-history]').forEach(button=>button.onclick=()=>showLotHistory(button.closest('.sc-lot-card')));
+    rootEl.querySelector('#scAddLot').onclick=()=>{const draft=readCurrentLots(),nextGroup=Math.max(0,...draft.map(l=>Number(l.entryGroup)||0))+1;draft.push({entryGroup:nextGroup,lot:'',exp:'',qty:{}});putDraft(draft);renderShell();};
     rootEl.querySelectorAll('[data-remove-lot]').forEach(b=>b.onclick=()=>{const draft=readCurrentLots();draft.splice(Number(b.dataset.removeLot),1);putDraft(draft);renderShell();});
-    rootEl.querySelector('#scSaveNext').onclick=()=>{saveCurrent('done');goNext();};
-    rootEl.querySelector('#scReview').onclick=()=>{saveCurrent('review');goNext();};
-    rootEl.querySelector('#scMissing').onclick=()=>{saveCurrent('missing');goNext();};
+    rootEl.querySelector('#scSaveNext').onclick=async()=>{if(await saveCurrent('done'))goNext();};
+    rootEl.querySelector('#scReview').onclick=async()=>{if(await saveCurrent('review'))goNext();};
+    rootEl.querySelector('#scMissing').onclick=async()=>{if(await saveCurrent('missing'))goNext();};
+  }
+
+  async function acquireCurrentLock(){
+    clearInterval(lockTimer);const item=state.items[state.countIndex],banner=rootEl.querySelector('#scCountLock');if(!item||!banner)return;
+    const apply=async()=>{try{currentLock=await SLF.auth.acquireCountLock(workspace.department.id,item.itemId||item.code);const mine=currentLock?.acquired,name=currentLock?.locked_by_name||userProfile?.full_name||authSession?.user?.email||'ผู้ใช้งาน';banner.classList.remove('is-warning');banner.classList.toggle('is-locked',!mine);banner.innerHTML=mine?`<span>✍️</span><strong>คุณ (${esc(name)}) กำลังตรวจนับรายการนี้</strong>`:`<span>🔒</span><strong>${esc(name)} กำลังตรวจนับรายการนี้</strong>`;rootEl.querySelectorAll('.sc-count-card input,.sc-count-card button').forEach(el=>{const card=el.closest('.sc-lot-card'),ownerLocked=el.hasAttribute('data-owner-locked')&&card?.dataset.editing!=='true';el.disabled=!mine||ownerLocked;});}catch(error){currentLock=null;const detail=lockErrorMessage(error);banner.classList.remove('is-warning');banner.classList.add('is-locked');banner.innerHTML=`<span>⚠️</span><span><strong>ยังเริ่มนับไม่ได้</strong><small>${esc(detail)}</small></span><button type="button" class="btn" data-retry-lock>ลองตรวจสอบอีกครั้ง</button>`;rootEl.querySelectorAll('.sc-count-card input,.sc-count-card button').forEach(el=>{el.disabled=!el.hasAttribute('data-retry-lock');});banner.querySelector('[data-retry-lock]').onclick=apply;console.warn('Count lock acquisition failed',error);}};
+    await apply();lockTimer=setInterval(apply,30000);
+  }
+  function lockErrorMessage(error){
+    const message=String(error?.message||'');
+    if(/locked_by|lock_expires_at|column/i.test(message))return 'ฐานข้อมูล Lock ยังไม่ครบ กรุณารัน SQL V5 ล่าสุด';
+    if(/function|schema cache|PGRST202/i.test(message))return 'ยังไม่พบระบบจองสิทธิ์ กรุณารัน SQL V5 และรีโหลด Schema';
+    if(/Item is not assigned/i.test(message))return 'หน่วยงานนี้เลือกนับเฉพาะรายการที่ผูก และรายการนี้ไม่ได้อยู่ในรายการที่อนุญาต';
+    if(/Item not found in current organization/i.test(message))return 'ไม่พบรายการนี้ในโรงพยาบาลปัจจุบัน';
+    if(/access denied|permission/i.test(message))return 'บัญชีนี้ไม่มีสิทธิ์ในหน่วยงานปัจจุบัน';
+    return 'เชื่อมต่อระบบจองสิทธิ์ไม่สำเร็จ กรุณาลองอีกครั้ง';
   }
 
   function goNext(){
@@ -501,21 +480,24 @@ window.SLF = window.SLF || {};
   }
   function readCurrentLots(){
     return [...rootEl.querySelectorAll('.sc-lot-card')].map(card=>{
+      const old=countFor(state.items[state.countIndex]).lots[Number(card.dataset.lotIndex)]||{};
       const qty={};
       card.querySelectorAll('[data-qty]').forEach(i=>qty[i.dataset.qty]=Number(i.value)||0);
-      return {lot:card.querySelector('[data-field="lot"]').value.trim(),exp:card.querySelector('[data-field="exp"]').value,qty};
+      return {...old,lot:card.querySelector('[data-field="lot"]').value.trim(),exp:card.querySelector('[data-field="exp"]').value,qty,editReason:card.querySelector('[data-edit-reason]')?.value.trim()||old.editReason||''};
     });
   }
   function putDraft(lots){
     const item=state.items[state.countIndex], old=countFor(item);
     state.counts[itemKey(item)]={...old,lots};saveState();
   }
-  function saveCurrent(status){
+  async function saveCurrent(status){
     const item=state.items[state.countIndex];
     const lots=readCurrentLots(),note=rootEl.querySelector('#scCountNote').value.trim();
-    state.counts[itemKey(item)]={status,lots,note,counterName:userProfile?.full_name||state.session.counter||''};
-    saveState();
-    SLF.auth.saveCount(workspace.department.id,item.itemId||item.code,status,lots,note,userProfile?.full_name||state.session.counter||'',item.packages).catch(()=>{syncStatus='offline';updateSyncBadge();});
+    if(status!=='missing'){
+      const invalid=lots.findIndex(lot=>!lot.lot||!lot.exp||lotTotal(item,lot)<=0);if(invalid>=0){await SLF.components.alertModal('ข้อมูล LOT ยังไม่ครบ',`LOT ${invalid+1}: กรุณาระบุเลข LOT, EXP และจำนวนอย่างน้อย 1 หน่วยบรรจุ`,'warning');return false;}
+      const seen=new Map();for(let i=0;i<lots.length;i++){const key=`${lots[i].lot.trim().toLowerCase()}\u0000${lots[i].exp.trim()}`;if(seen.has(key)){await SLF.components.alertModal('พบ LOT และ EXP ซ้ำ',`ข้อมูลนี้มีอยู่แล้วใน LOT ${seen.get(key)+1} กรุณาแก้ไขจำนวนในรายการเดิม`,'warning');lots.splice(i,1);putDraft(lots);renderShell();return false;}seen.set(key,i);}
+    }
+    try{await SLF.auth.saveCount(workspace.department.id,item.itemId||item.code,status,status==='missing'?[]:lots,note,userProfile?.full_name||state.session.counter||'',item.packages);state.counts[itemKey(item)]={status,lots:status==='missing'?[]:lots,note,counterName:userProfile?.full_name||state.session.counter||''};saveState();currentLock=null;return true;}catch(error){await SLF.components.alertModal('บันทึกข้อมูลไม่สำเร็จ',error.message||'กรุณาลองใหม่อีกครั้ง','error');return false;}
   }
   function updateTotals(){
     const item=state.items[state.countIndex], lots=readCurrentLots();
@@ -547,7 +529,8 @@ window.SLF = window.SLF || {};
         ['role รองรับเฉพาะ admin, staff, user'],
         ['อีเมลเดียวดูแลหลายหน่วยงานได้ โดยเพิ่มหลายแถวใน Users และระบุ department_code คนละค่า'],
         ['ถ้า Department_Items ว่าง หน่วยงานจะเห็น Items ทั้งหมด; ถ้ามีข้อมูล จะเห็นเฉพาะ item_id ที่ผูกไว้'],
-        ['package_size ต้องเป็นตัวเลขมากกว่า 0']
+        ['ทุกหน่วยบรรจุต้องมี stock_item_unit_id และ package_size ต้องเป็นตัวเลขมากกว่า 0'],
+        ['สินค้าทุกตัวต้องมีหน่วยย่อย package_size = 1 ในชีต Packages']
       ],
       'Organizations':[
         ['organization_code','organization_name'],
@@ -563,6 +546,7 @@ window.SLF = window.SLF || {};
       ],
       'Packages':[
         ['organization_code','item_id','stock_item_unit_id','package_name','package_size','barcode'],
+        ['HOSP-BMS','10001','50000','เม็ด',1,'885000000001'],
         ['HOSP-BMS','10001','50001','กล่อง',100,'885000000101']
       ],
       'Department_Items':[
@@ -611,6 +595,11 @@ window.SLF = window.SLF || {};
       const code=valueOf(row,'item_code','รหัสรายการ','รหัสยา');
       const baseUnit=valueOf(row,'base_unit','หน่วยฐาน')||'หน่วย';
       const packages=packageRows.filter(p=>valueOf(p,'item_id')===itemId).map(p=>({stockItemUnitId:valueOf(p,'stock_item_unit_id'),name:valueOf(p,'package_name','หน่วยบรรจุ')||baseUnit,size:Math.max(1,Number(valueOf(p,'package_size','ขนาดบรรจุ'))||1),barcode:valueOf(p,'barcode')}));
+      if(!packages.length)throw new Error(`ไม่พบ Package ของ item_id ${itemId}`);
+      if(packages.some(pack=>!pack.stockItemUnitId))throw new Error(`Package ของ item_id ${itemId} ต้องมี stock_item_unit_id ทุกแถว`);
+      if(new Set(packages.map(pack=>pack.stockItemUnitId)).size!==packages.length)throw new Error(`Package ของ item_id ${itemId} มี stock_item_unit_id ซ้ำกัน`);
+      if(new Set(packages.map(pack=>Number(pack.size))).size!==packages.length)throw new Error(`Package ของ item_id ${itemId} มี package_size ซ้ำกัน`);
+      if(!packages.some(pack=>Number(pack.size)===1))throw new Error(`Package ของ item_id ${itemId} ต้องมีหน่วยย่อย package_size = 1`);
       if(!packages.some(pack=>Number(pack.size)===1))packages.push({stockItemUnitId:'',name:baseUnit,size:1,barcode:''});
       packages.sort((a,b)=>Number(b.size)-Number(a.size));
       const dept=departmentRows.find(d=>valueOf(d,'item_id')===itemId);
@@ -641,18 +630,19 @@ window.SLF = window.SLF || {};
       <div class="sc-preview-table-wrap"><table class="data"><thead><tr><th>item_id</th><th>item_code</th><th>item_name</th><th>หน่วย</th><th>ราคาต่อหน่วย</th><th>Package</th><th>ผูกหน่วยงาน</th></tr></thead><tbody>
         ${prepared.items.map(item=>`<tr><td>${esc(item.itemId)}</td><td>${esc(item.code)}</td><td>${esc(item.name)}</td><td>${esc(item.baseUnit)}</td><td>${formatMoney(item.unitPrice)}</td><td>${item.packages.length}</td><td>${item.departmentLinked?'ใช่':'ไม่'}</td></tr>`).join('')}
       </tbody></table></div>
-      <div class="row"><button class="btn" id="scCancelImport">ยกเลิก</button><button class="btn btn-primary" id="scConfirmImport">ยืนยันนำเข้าข้อมูล</button></div>
+      <div class="sc-import-progress" id="scImportProgress" hidden><div><span>เตรียมนำเข้าข้อมูล</span><b>0%</b></div><div class="sc-import-progress-track"><i></i></div></div>
+      <div class="sc-auth-error" id="scImportModalError"></div><div class="row"><button class="btn" id="scCancelImport">ยกเลิก</button><button class="btn btn-primary" id="scConfirmImport">ยืนยันนำเข้าข้อมูล</button></div>
     </div></div>`;
     modalRoot.querySelector('#scCancelImport').onclick=()=>{modalRoot.innerHTML='';const input=rootEl.querySelector('#scMasterFile');if(input)input.value='';};
     modalRoot.querySelector('#scConfirmImport').onclick=async()=>{
-      const confirmButton=modalRoot.querySelector('#scConfirmImport');confirmButton.disabled=true;confirmButton.textContent='กำลังนำเข้า...';
+      const confirmButton=modalRoot.querySelector('#scConfirmImport'),cancelButton=modalRoot.querySelector('#scCancelImport'),progressEl=modalRoot.querySelector('#scImportProgress'),errorEl=modalRoot.querySelector('#scImportModalError');confirmButton.disabled=true;cancelButton.disabled=true;confirmButton.textContent='กำลังนำเข้า...';progressEl.hidden=false;errorEl.textContent='';
+      const updateProgress=({percent,label})=>{progressEl.querySelector('span').textContent=label;progressEl.querySelector('b').textContent=`${percent}%`;progressEl.querySelector('i').style.width=`${percent}%`;};
       try{
-        if(prepared.payload&&SLF.auth.importMasterData)await SLF.auth.importMasterData(workspace.organization.id,workspace.department.id,prepared.payload);
+        if(prepared.payload&&SLF.auth.importMasterData)await SLF.auth.importMasterData(workspace.organization.id,workspace.department.id,prepared.payload,updateProgress);
+        await new Promise(resolve=>setTimeout(resolve,300));
         modalRoot.innerHTML='';state.items=prepared.items;state.counts={};state.search='';saveState();renderShell();
       }catch(error){
-        console.error('Master data import failed',error);confirmButton.disabled=false;confirmButton.textContent='ยืนยันนำเข้าข้อมูล';
-        const status=rootEl.querySelector('#scImportStatus');if(status)status.textContent=importErrorMessage(error);
-        modalRoot.innerHTML='';
+        console.error('Master data import failed',error);confirmButton.disabled=false;cancelButton.disabled=false;confirmButton.textContent='ลองนำเข้าอีกครั้ง';errorEl.textContent=importErrorMessage(error);progressEl.classList.add('is-error');progressEl.querySelector('span').textContent='นำเข้าไม่สำเร็จ';
       }
     };
   }
@@ -705,5 +695,5 @@ window.SLF = window.SLF || {};
   }
 
   SLF.pages = SLF.pages || {};
-  SLF.pages.stockCount = { render, prepareMasterWorkbook, chooseWorkspace:renderWorkspacePicker };
+  SLF.pages.stockCount = { render, prepareMasterWorkbook, downloadMasterTemplate, chooseWorkspace:renderWorkspacePicker };
 })();

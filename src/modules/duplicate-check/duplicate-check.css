@@ -3,7 +3,7 @@
 .dc-step{display:flex;gap:10px;align-items:center;padding:11px 9px;border-radius:11px;color:var(--ink-soft);font-size:12px}
 .dc-step b{display:grid;place-items:center;width:25px;height:25px;border-radius:50%;background:var(--bg);border:1px solid var(--border);flex:none}
 .dc-step.active{color:var(--ink);background:var(--teal-tint)}.dc-step.active b{color:var(--teal);border-color:var(--teal)}
-.dc-step.done b{background:var(--teal);color:#07101e;border-color:var(--teal)}
+.dc-step.done b{background:var(--success);color:var(--on-accent);border-color:var(--success)}
 .dc-work{min-width:0}.dc-work .panel{margin:0}.dc-actions{display:flex;justify-content:space-between;gap:10px;margin-top:22px;padding-top:16px;border-top:1px solid var(--border)}
 .dc-drop{display:grid;place-items:center;min-height:230px;padding:28px;border:2px dashed var(--border-bright);border-radius:18px;text-align:center;background:var(--teal-tint);cursor:pointer}.dc-drop:hover{border-color:var(--teal)}
 .dc-drop input{display:none}.dc-drop .icon{font-size:42px;margin-bottom:8px}.dc-note{padding:12px 14px;border-left:3px solid var(--teal);border-radius:8px;background:var(--teal-tint);font-size:12px;line-height:1.55;margin-bottom:18px}

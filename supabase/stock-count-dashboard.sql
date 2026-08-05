@@ -19,12 +19,16 @@ language sql stable security definer set search_path=public as $$
          select 1 from public.department_members dm
          where dm.department_id=d.id and dm.user_id=auth.uid() and dm.status='active'
        )
+  ), entry_lots as (
+    select e.count_id,e.entry_group,e.lot,e.exp,min(e.created_at) as created_at,
+      coalesce(sum(e.base_quantity),0)::numeric as quantity
+    from public.opening_stock_entries e
+    group by e.count_id,e.entry_group,e.lot,e.exp
   ), entry_totals as (
-    select e.count_id,
-      coalesce(sum(e.base_quantity),0)::numeric as total_quantity,
+    select e.count_id,coalesce(sum(e.quantity),0)::numeric as total_quantity,
       count(*)::bigint as lot_count,
-      jsonb_agg(jsonb_build_object('lot',e.lot,'exp',e.exp,'quantity',e.base_quantity) order by e.created_at) as lots
-    from public.opening_stock_entries e group by e.count_id
+      jsonb_agg(jsonb_build_object('lot',e.lot,'exp',e.exp,'quantity',e.quantity) order by e.created_at) as lots
+    from entry_lots e group by e.count_id
   )
   select c.id,o.id,o.name,d.id,d.name,i.id,i.item_id,i.code,i.name,i.base_unit,
     coalesce(i.unit_price,0),c.status,c.note,c.counter_name,c.completed_at,c.updated_at,

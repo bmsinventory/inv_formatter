@@ -1,4 +1,5 @@
 :root{
+  color-scheme:dark;
   --bg:#070B1B;
   --bg-elevated:#0D1430;
   --paper:#111936;
@@ -19,6 +20,8 @@
   --danger-tint:rgba(255,93,122,.14);
   --warn:#FFBE3D;
   --warn-tint:rgba(255,190,61,.14);
+  --success:#9DFF57;--success-tint:rgba(157,255,87,.13);--on-accent:#061020;--on-strong:#F8FFFF;
+  --control-bg:#151E3F;--control-hover:#1A254B;--overlay:rgba(3,6,18,.72);--focus-ring:rgba(22,217,227,.3);
   --radius:20px;
   --shadow:0 18px 60px rgba(0,0,0,.28),inset 0 1px rgba(255,255,255,.025);
   --shadow-hover:0 20px 64px rgba(0,0,0,.38),0 0 36px rgba(22,217,227,.08);
@@ -30,6 +33,8 @@
   --teal-tint:rgba(53,242,197,.13);--amber:#FFE66D;--amber-dark:#D8B936;
   --amber-tint:rgba(255,230,109,.14);--violet:#37A7FF;--violet-tint:rgba(55,167,255,.14);
   --border:rgba(112,232,215,.18);--border-bright:rgba(53,242,197,.4);
+  --success:#FFE66D;--success-tint:rgba(255,230,109,.14);--on-accent:#042018;
+  --control-bg:#10434E;--control-hover:#155361;--overlay:rgba(1,15,19,.76);--focus-ring:rgba(53,242,197,.3);
 }
 :root[data-theme="sunset"]{
   --bg:#190C1B;--bg-elevated:#2A122B;--paper:#321633;--paper-solid:#402040;
@@ -37,14 +42,19 @@
   --teal-tint:rgba(255,138,91,.14);--amber:#FFD35A;--amber-dark:#E5AA26;
   --amber-tint:rgba(255,211,90,.14);--violet:#F05DCE;--violet-tint:rgba(240,93,206,.15);
   --border:rgba(255,157,184,.18);--border-bright:rgba(255,138,91,.42);
+  --success:#FFD35A;--success-tint:rgba(255,211,90,.14);--on-accent:#24100A;
+  --control-bg:#402040;--control-hover:#512850;--overlay:rgba(20,6,21,.76);--focus-ring:rgba(255,138,91,.32);
 }
 :root[data-theme="light"]{
+  color-scheme:light;
   --bg:#EDF3FA;--bg-elevated:#E2ECF7;--paper:#FFFFFF;--paper-solid:#F7FAFE;
   --ink:#15203B;--ink-soft:#65708B;--teal:#087F9D;--teal-dark:#05647D;
   --teal-tint:rgba(8,127,157,.1);--amber:#6DAF22;--amber-dark:#508718;
   --amber-tint:rgba(109,175,34,.12);--violet:#6655D9;--violet-tint:rgba(102,85,217,.1);
   --border:rgba(47,72,119,.16);--border-bright:rgba(8,127,157,.32);
   --danger:#C53B58;--danger-tint:rgba(197,59,88,.1);--warn:#B97800;--warn-tint:rgba(185,120,0,.1);
+  --success:#508718;--success-tint:rgba(80,135,24,.1);--on-accent:#FFFFFF;
+  --control-bg:#F7FAFE;--control-hover:#EDF3FA;--overlay:rgba(20,31,55,.42);--focus-ring:rgba(8,127,157,.25);
   --shadow:0 14px 42px rgba(31,52,88,.1),inset 0 1px rgba(255,255,255,.8);
   --shadow-hover:0 18px 48px rgba(31,52,88,.15);
 }

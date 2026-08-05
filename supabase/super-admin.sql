@@ -41,6 +41,19 @@ grant select,insert,update,delete on public.organizations,public.departments,pub
 grant select on public.platform_admins to authenticated;
 grant execute on function public.is_super_admin() to authenticated;
 
+create or replace function public.add_super_admin_by_email(target_email text)
+returns uuid language plpgsql security definer set search_path=public,auth as $$
+declare target_user_id uuid;
+begin
+  if not public.is_super_admin() then raise exception 'Super Admin access required'; end if;
+  select id into target_user_id from auth.users where lower(email)=lower(btrim(target_email)) limit 1;
+  if target_user_id is null then raise exception 'ไม่พบบัญชี Google นี้ในระบบ กรุณาให้ผู้ใช้งาน Login อย่างน้อยหนึ่งครั้งก่อน'; end if;
+  insert into public.platform_admins(user_id) values(target_user_id) on conflict(user_id) do nothing;
+  return target_user_id;
+end; $$;
+
+grant execute on function public.add_super_admin_by_email(text) to authenticated;
+
 create or replace function public.clear_organization_inventory(target_organization_id uuid)
 returns integer language plpgsql security definer set search_path=public as $$
 declare deleted_count integer;

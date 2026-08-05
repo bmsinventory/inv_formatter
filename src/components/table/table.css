@@ -16,7 +16,17 @@ table.data td.editable:focus{outline:2px solid var(--teal);outline-offset:-2px;b
 table.data tr.group-start td{border-top:2px solid var(--teal-tint);}
 table.data tr.multi-lot td.name-cell{border-left:3px solid var(--amber);}
 table.data td.near-exp{color:var(--danger);font-weight:600;}
-table.data td.dim{color:#B9C2BE;}
+table.data td.dim{color:var(--ink-soft);}
+
+/* Semantic theme colors */
+table.data th{color:var(--on-strong)}
+table.data tbody tr:hover td{background:var(--teal-tint)}
+table.data tbody tr:nth-child(even) td{background:color-mix(in srgb,var(--ink) 2%,transparent)}
+.stat-card{background:linear-gradient(145deg,var(--teal-tint),var(--violet-tint))}
+.preview-total-card{color:var(--on-accent);background:linear-gradient(135deg,var(--teal-dark),color-mix(in srgb,var(--teal) 42%,var(--violet)) 55%,var(--violet));box-shadow:0 12px 30px color-mix(in srgb,var(--teal) 20%,transparent)}
+.preview-total-hint,.preview-total-value span{color:color-mix(in srgb,var(--on-accent) 74%,transparent)}
+.preview-toolbar{background:color-mix(in srgb,var(--paper-solid) 86%,transparent)}
+.chip-filter.on{color:var(--on-accent)}
 
 /* ---------- Badges / stat cards ---------- */
 .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;}
